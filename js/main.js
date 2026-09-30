@@ -1,6 +1,7 @@
 /*
  * main.js — routes between the instances overview and an instance console (#instance-1,
- * #instance-2), and boots the console: simulation, renderer, UI and the fixed-step loop.
+ * #instance-2, and #instance-N for instances created in this browser), and boots the console:
+ * simulation, renderer, UI and the fixed-step loop.
  */
 (function (root) {
   'use strict';
@@ -31,6 +32,8 @@
   document.getElementById('crumbName').textContent = L.name;
   document.getElementById('crumbInst').textContent = 'Instance ' + L.instance;
   document.getElementById('mapRev').textContent = 'rev ' + L.rev;
+  document.getElementById('robotCount').textContent = `${L.robots.length}/${L.robots.length}`;
+  document.getElementById('canvasWrap').style.setProperty('--map-ar', `${L.bounds.x1 - L.bounds.x0} / ${L.bounds.y1 - L.bounds.y0}`);
   document.getElementById('map').setAttribute('aria-label',
     `Floor map of ${L.name} (${L.kind.toLowerCase()}): ${L.robots.length} robots move payloads between ${L.stations.length} stations, reserving path segments and negotiating right of way`);
 

@@ -1,13 +1,29 @@
 /*
  * Headless stress test for the coordination core.
  *   node tools/stress-test.js [hours=2] [seeds=6] [layout=bay-01]
- * Layouts: bay-01 (instance 1), bay-02 (instance 2).
- * Fails (exit 1) on any collision or on a robot stuck for more than 45 s.
+ * Layouts: bay-01 (instance 1), bay-02 (instance 2), or a generated grid as created from the
+ * Instances page, e.g. grid:aisles=5,rows=4,docks=n,faces=both,robots=5,dockWorkers=3,aisleWalkers=2
+ * (add uncapped=1 to try more robots than the create form allows for that grid).
+ * Fails (exit 1) on any collision, on a robot stuck for more than 45 s, or on a person standing
+ * still inside a lane for more than 3 s.
  */
 'use strict';
-globalThis.WH_LAYOUT = process.argv[4] || 'bay-01';
+const layoutArg = process.argv[4] || 'bay-01';
+if (layoutArg.startsWith('grid:')) {
+  const rec = { id: 'test', n: 9, name: 'Test grid', rev: 1 };
+  for (const kv of layoutArg.slice(5).split(',').filter(Boolean)) {
+    const [k, v] = kv.split('=');
+    rec[k] = /^\d+$/.test(v) ? Number(v) : v;
+  }
+  if (rec.uncapped) globalThis.WH_TEST_UNCAPPED = true;
+  globalThis.WH_SPECS = [rec];
+  globalThis.WH_LAYOUT = 'custom-test';
+} else globalThis.WH_LAYOUT = layoutArg;
+require('../js/store.js');
 require('../js/world.js');
-console.log('layout', globalThis.WH.world.id, '·', globalThis.WH.world.kind);
+const Lw = globalThis.WH.world;
+console.log('layout', Lw.id, '·', Lw.kind, '·', Lw.stations.length, 'stations ·', Lw.robots.length, 'robots ·',
+  Lw.peds ? Lw.peds.walkers.length : 0, 'people', Lw.spec ? JSON.stringify(Lw.spec) : '');
 require('../js/sim.js');
 const WH = globalThis.WH;
 

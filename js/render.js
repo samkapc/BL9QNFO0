@@ -58,7 +58,7 @@
     ok: '#1f8a4c', warn: '#c77f00', alarm: '#d23a32', work: '#2f6fd6', idle: '#7a818a', payload: '#b0854e',
   });
   // Darker fleet colours so routes and tags stay legible on the light floor
-  const LIGHT_ID = { '#4bb0c8': '#1b86a4', '#8f88ea': '#5a51cf', '#cc76b8': '#ab3f91' };
+  const LIGHT_ID = { '#4bb0c8': '#1b86a4', '#8f88ea': '#5a51cf', '#cc76b8': '#ab3f91', '#d98a5f': '#b5602f', '#8fb45a': '#5b8a2a' };
   const tones = (P) => ({ drive: P.ok, wait: P.warn, work: P.work, idle: P.idle, fault: P.alarm });
 
   let C = DARK;
@@ -346,7 +346,7 @@
         } else if (a.kind === 'pallets') {
           const cw = (w - 12) / a.cols, ch = (h - 12) / a.rows;
           const s = Math.min(cw, ch) - 8;
-          const loaded = /floor/i.test(a.label || '') ? 0.9 : 0.15;
+          const loaded = a.fill != null ? a.fill : /floor/i.test(a.label || '') ? 0.9 : 0.15;
           for (let c = 0; c < a.cols; c++) {
             for (let r = 0; r < a.rows; r++) {
               this.pallet(ctx, a.x0 + 6 + c * cw + (cw - s) / 2, a.y0 + 6 + r * ch + (ch - s) / 2, s, s, rng() < 0.78, rng, loaded);

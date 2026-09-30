@@ -129,84 +129,166 @@
     return spots.map((s) => s[0]);
   }
 
-  // ======================================================================== Instance 1 · Bay 01
-  // A regular cross-aisle grid: four storage aisles, three cross-aisles, pick-face bays cut into
-  // the racking, and dock doors on the north and south walls.
-  function buildBay01() {
-    const COLS = [250, 610, 970, 1330], ROWS = [200, 500, 800], ROW_IDS = ['A', 'B', 'C'], MIDS = [350, 650];
-    const BAY = 82, DOCK_Y = [95, 905];
+  // ======================================================================== Cross-aisle grid
+  // A parametric cross-aisle grid: storage aisles (columns) crossed by cross-aisles (rows), pick-face
+  // bays cut into the racking beside each aisle, and dock doors on the north and south walls
+  // (flow-through) or on the north wall only (U-flow). Bay 01 is this generator with its preset;
+  // the instances a viewer creates are built by it too, from the settings kept in the browser.
+  const W_ = [-1, 0], E_ = [1, 0], N_ = [0, -1], S_ = [0, 1];
+  const GRID_LIMITS = { aisles: [2, 5], rows: [2, 4], robots: [1, 5], dockWorkers: [0, 3], aisleWalkers: [0, 2] };
+  const GRID_DEFAULTS = { aisles: 4, rows: 3, docks: 'ns', faces: 'one', robots: 3, dockWorkers: 3, aisleWalkers: 2, mix: 'balanced' };
+  const FLEET_COLORS = ['#4bb0c8', '#8f88ea', '#cc76b8', '#d98a5f', '#8fb45a'];
+  const PEOPLE_COLORS = [
+    { vest: '#d8e02a', hat: '#f2f2ee' }, { vest: '#f08a24', hat: '#f2c230' }, { vest: '#d8e02a', hat: '#3b6fd1' },
+    { vest: '#f08a24', hat: '#f2f2ee' }, { vest: '#d8e02a', hat: '#2f9e62' },
+  ];
+  const MIXES = {
+    balanced: [0.34, 0.34, 0.16, 0.16],
+    inbound: [0.5, 0.2, 0.15, 0.15],     // receiving peak
+    outbound: [0.2, 0.5, 0.15, 0.15],    // shipping peak
+  };
+  const WORDS = ['no', 'one', 'two', 'three', 'four', 'five'];
+
+  /** Settings with every field present and within range (records from storage may be old or edited). */
+  function gridSpec(s) {
+    s = s || {};
+    const out = {};
+    const int = (k) => {
+      const [lo, hi] = GRID_LIMITS[k], v = Math.round(Number(s[k]));
+      out[k] = Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : GRID_DEFAULTS[k];
+    };
+    int('aisles'); int('rows');
+    out.docks = s.docks === 'n' ? 'n' : 'ns';
+    out.faces = s.faces === 'both' ? 'both' : 'one';
+    int('robots');
+    out.robots = Math.min(out.robots, gridMaxRobots(out));
+    int('dockWorkers'); int('aisleWalkers');
+    out.mix = MIXES[s.mix] ? s.mix : 'balanced';
+    return out;
+  }
+  /** Stations the grid generator creates for these settings. */
+  function gridStations(g) {
+    return g.aisles * (g.docks === 'ns' ? 2 : 1) + g.aisles * (g.rows - 1) * (g.faces === 'both' ? 2 : 1);
+  }
+  /**
+   * Largest fleet verified for a grid of this size (tools/stress-test.js over every combination).
+   * Two limits: a small path network gridlocks when robots fill an aisle from both ends, and a
+   * task needs two free stations while every idle robot parks on one.
+   */
+  function gridMaxRobots(g) {
+    if (root.WH_TEST_UNCAPPED) return GRID_LIMITS.robots[1];   // stress test probing the limit
+    const network = Math.max(3, g.aisles + g.rows - 2);
+    return Math.max(1, Math.min(GRID_LIMITS.robots[1], network, Math.floor(gridStations(g) / 2)));
+  }
+  function gridSummary(g) {
+    const cap = (w) => w[0].toUpperCase() + w.slice(1);
+    return `${cap(WORDS[g.aisles])} storage aisles crossed by ${WORDS[g.rows]} cross-aisles, pick faces cut into the racking` +
+      `${g.faces === 'both' ? ' on both sides of each aisle' : ''}, and dock doors on the ` +
+      `${g.docks === 'ns' ? 'north and south walls' : 'north wall (U-flow)'}.`;
+  }
+
+  function buildGrid(input, over) {
+    over = over || {};
+    const g = gridSpec(input);
+    const n = g.aisles, m = g.rows, ns = g.docks === 'ns', F = g.faces === 'both' ? 2 : 1;
+    const COLS = [], ROWS = [], ROW_IDS = [], MIDS = [];
+    for (let i = 0; i < n; i++) COLS.push(250 + 360 * i);
+    for (let j = 0; j < m; j++) { ROWS.push(200 + 300 * j); ROW_IDS.push(String.fromCharCode(65 + j)); }
+    for (let j = 0; j < m - 1; j++) MIDS.push(ROWS[j] + 150);
+    const LAST = ROWS[m - 1], BAY = 82;
+    const X1 = COLS[n - 1] + 240, Y1 = LAST + 170;
+    const mix = MIXES[g.mix];
     const L = makeLayout({
-      id: 'bay-01', slug: 'instance-1', instance: 1, name: 'Bay 01', site: 'DC-02', rev: 7,
-      kind: 'Cross-aisle grid',
-      summary: 'Four storage aisles crossed by three cross-aisles, pick faces cut into the racking, and dock doors on the north and south walls.',
-      W: 1600, H: 1000, WALL: { x0: 30, y0: 30, x1: 1570, y1: 970 },
-      bounds: { x0: -30, y0: -30, x1: 1588, y1: 988 },
+      id: over.id || 'grid', slug: over.slug || '', instance: over.instance || 0, name: over.name || 'Untitled',
+      site: 'DC-02', rev: over.rev || 1,
+      kind: ns ? 'Cross-aisle grid' : 'U-flow grid',
+      summary: gridSummary(g),
+      W: X1 + 30, H: Y1 + 30, WALL: { x0: 30, y0: 30, x1: X1, y1: Y1 },
+      bounds: { x0: -30, y0: -30, x1: X1 + 18, y1: Y1 + 18 },
       zoneNames: { inbound: 'Inbound dock', storage: 'Storage pick face', outbound: 'Outbound dock' },
-      robots: [
-        { id: 'AMR-01', color: '#4bb0c8', start: 'S02' },
-        { id: 'AMR-02', color: '#8f88ea', start: 'S08' },
-        { id: 'AMR-03', color: '#cc76b8', start: 'S13' },
-      ],
+      robots: [],
       flows: [
-        { w: 0.34, from: 'inbound', to: 'storage' },
-        { w: 0.34, from: 'storage', to: 'outbound' },
-        { w: 0.16, from: 'storage', to: 'storage' },
-        { w: 0.16, from: 'inbound', to: 'outbound' },
+        { w: mix[0], from: 'inbound', to: 'storage' },
+        { w: mix[1], from: 'storage', to: 'outbound' },
+        { w: mix[2], from: 'storage', to: 'storage' },
+        { w: mix[3], from: 'inbound', to: 'outbound' },
       ],
     });
+    // Junctions are named after the first pick-face station they serve
+    const jid = (ci, j) => 'J' + pad2(n + 1 + (j * n + ci) * F);
     ROW_IDS.forEach((r, ri) => COLS.forEach((x, ci) => addNode(L, r + (ci + 1), x, ROWS[ri], 'cross')));
-    COLS.forEach((x, ci) => {
-      addNode(L, 'J' + pad2(5 + ci), x, MIDS[0], 'junction');
-      addNode(L, 'J' + pad2(9 + ci), x, MIDS[1], 'junction');
-    });
-    COLS.forEach((x, ci) => addStation(L, 1 + ci, x, DOCK_Y[0], { x: 0, y: -1 }, 'A' + (ci + 1), 'inbound'));
-    COLS.forEach((x, ci) => addStation(L, 5 + ci, x + BAY, MIDS[0], { x: 1, y: 0 }, 'J' + pad2(5 + ci), 'storage'));
-    COLS.forEach((x, ci) => addStation(L, 9 + ci, x + BAY, MIDS[1], { x: 1, y: 0 }, 'J' + pad2(9 + ci), 'storage'));
-    COLS.forEach((x, ci) => addStation(L, 13 + ci, x, DOCK_Y[1], { x: 0, y: 1 }, 'C' + (ci + 1), 'outbound'));
+    COLS.forEach((x, ci) => MIDS.forEach((y, j) => addNode(L, jid(ci, j), x, y, 'junction')));
+    let num = 0;
+    COLS.forEach((x, ci) => addStation(L, ++num, x, ROWS[0] - 105, { x: 0, y: -1 }, 'A' + (ci + 1),
+      ns || ci % 2 === 0 ? 'inbound' : 'outbound'));
+    MIDS.forEach((y, j) => COLS.forEach((x, ci) => {
+      if (F === 2) addStation(L, ++num, x - BAY, y, { x: -1, y: 0 }, jid(ci, j), 'storage');
+      addStation(L, ++num, x + BAY, y, { x: 1, y: 0 }, jid(ci, j), 'storage');
+    }));
+    if (ns) COLS.forEach((x, ci) => addStation(L, ++num, x, LAST + 105, { x: 0, y: 1 }, ROW_IDS[m - 1] + (ci + 1), 'outbound'));
     ROW_IDS.forEach((r) => {
-      for (let c = 1; c < 4; c++) addEdge(L, r + c, r + (c + 1), 'cross', 'Cross-aisle ' + r, c + '–' + (c + 1));
+      for (let c = 1; c < n; c++) addEdge(L, r + c, r + (c + 1), 'cross', 'Cross-aisle ' + r, c + '–' + (c + 1));
     });
     COLS.forEach((_, ci) => {
-      const a = ci + 1, j1 = 'J' + pad2(5 + ci), j2 = 'J' + pad2(9 + ci);
-      addEdge(L, 'A' + a, j1, 'aisle', 'Aisle ' + a, 'A–B');
-      addEdge(L, j1, 'B' + a, 'aisle', 'Aisle ' + a, 'A–B');
-      addEdge(L, 'B' + a, j2, 'aisle', 'Aisle ' + a, 'B–C');
-      addEdge(L, j2, 'C' + a, 'aisle', 'Aisle ' + a, 'B–C');
+      const a = ci + 1;
+      MIDS.forEach((__, j) => {
+        const sub = ROW_IDS[j] + '–' + ROW_IDS[j + 1];
+        addEdge(L, ROW_IDS[j] + a, jid(ci, j), 'aisle', 'Aisle ' + a, sub);
+        addEdge(L, jid(ci, j), ROW_IDS[j + 1] + a, 'aisle', 'Aisle ' + a, sub);
+      });
     });
 
     // Scenery
-    [[244, 456], [544, 756]].forEach(([y0, y1]) => {
+    MIDS.forEach((y) => {
+      const y0 = y - 106, y1 = y + 106;
       L.racks.push({ x0: 46, x1: COLS[0] - HALF - 8, y0, y1, faces: ['right'] });
-      for (let c = 0; c < 3; c++) L.racks.push({ x0: COLS[c] + HALF + 8, x1: COLS[c + 1] - HALF - 8, y0, y1, faces: ['left', 'right'] });
-      L.racks.push({ x0: COLS[3] + HALF + 8, x1: 1554, y0, y1, faces: ['left'] });
+      for (let c = 0; c < n - 1; c++) L.racks.push({ x0: COLS[c] + HALF + 8, x1: COLS[c + 1] - HALF - 8, y0, y1, faces: ['left', 'right'] });
+      L.racks.push({ x0: COLS[n - 1] + HALF + 8, x1: X1 - 16, y0, y1, faces: ['left'] });
     });
     L.racks.forEach((rk, i) => { rk.id = 'R' + pad2(i + 1); rk.pitch = 53; });
-    COLS.forEach((x) => MIDS.forEach((y) => L.bays.push({ x0: x + HALF, x1: x + HALF + 118, y0: y - 46, y1: y + 46 })));
-    [[48, 148], [852, 952]].forEach(([y0, y1]) => {
-      L.areas.push({ kind: 'staging', x0: 48, x1: COLS[0] - 64, y0, y1 });
-      for (let c = 0; c < 3; c++) L.areas.push({ kind: 'staging', x0: COLS[c] + 64, x1: COLS[c + 1] - 64, y0, y1 });
-      L.areas.push({ kind: 'staging', x0: COLS[3] + 64, x1: 1552, y0, y1 });
-    });
+    COLS.forEach((x) => MIDS.forEach((y) => {
+      L.bays.push({ x0: x + HALF, x1: x + HALF + 118, y0: y - 46, y1: y + 46 });
+      if (F === 2) L.bays.push({ x0: x - HALF - 118, x1: x - HALF, y0: y - 46, y1: y + 46 });
+    }));
+    const apron = (kind, y0, y1, extra) => {
+      const add = (x0, x1) => L.areas.push(Object.assign({ kind, x0, x1, y0, y1 }, extra && extra(x1 - x0)));
+      add(48, COLS[0] - 64);
+      for (let c = 0; c < n - 1; c++) add(COLS[c] + 64, COLS[c + 1] - 64);
+      add(COLS[n - 1] + 64, X1 - 18);
+    };
+    apron('staging', ROWS[0] - 152, ROWS[0] - 52);
+    if (ns) apron('staging', LAST + 52, LAST + 152);
+    else apron('pallets', LAST + 52, LAST + 152, (w) => ({ cols: Math.max(1, Math.floor((w - 12) / 60)), rows: 2, fill: 0.85 }));
+    if (!ns) L.areas.find((a) => a.kind === 'pallets').label = 'Floor storage';
     COLS.forEach((x, i) => {
       L.doors.push({ side: 'top', pos: x, w: 80, label: 'D' + (i + 1) });
-      L.doors.push({ side: 'bottom', pos: x, w: 80, label: 'D' + (i + 5) });
+      if (ns) L.doors.push({ side: 'bottom', pos: x, w: 80, label: 'D' + (i + 1 + n) });
     });
-    L.labels.push({ text: 'Inbound docks', x: 52, y: 160, align: 'left', size: 10.5, weight: 500 });
-    L.labels.push({ text: 'Outbound docks', x: 52, y: 840, align: 'left', size: 10.5, weight: 500 });
-    COLS.forEach((x, i) => [275, 575].forEach((y) => L.labels.push({ text: 'Aisle ' + (i + 1), x: x - 22, y, rot: -90 })));
-    ROWS.forEach((y, i) => [430, 1150].forEach((x) => L.labels.push({ text: 'Cross-aisle ' + ROW_IDS[i], x, y: y - 22 })));
-    for (let k = 0; k <= 8; k++) L.grid.xs.push(L.WALL.x0 + k * 192.5);
-    for (let k = 0; k <= 5; k++) L.grid.ys.push(L.WALL.y0 + k * 188);
+    L.labels.push({ text: ns ? 'Inbound docks' : 'Dock doors · inbound and outbound', x: 52, y: ROWS[0] - 40, align: 'left', size: 10.5, weight: 500 });
+    if (ns) L.labels.push({ text: 'Outbound docks', x: 52, y: LAST + 40, align: 'left', size: 10.5, weight: 500 });
+    COLS.forEach((x, i) => MIDS.forEach((y) => L.labels.push({ text: 'Aisle ' + (i + 1), x: x - 22, y: y - 75, rot: -90 })));
+    ROWS.forEach((y, i) => {
+      for (let c = 0; c < n - 1; c += 2) L.labels.push({ text: 'Cross-aisle ' + ROW_IDS[i], x: (COLS[c] + COLS[c + 1]) / 2, y: y - 22 });
+    });
+    const gx = Math.max(1, Math.round((X1 - 30) / 192.5)), gy = Math.max(1, Math.round((Y1 - 30) / 188));
+    for (let k = 0; k <= gx; k++) L.grid.xs.push(L.WALL.x0 + k * ((X1 - 30) / gx));
+    for (let k = 0; k <= gy; k++) L.grid.ys.push(L.WALL.y0 + k * ((Y1 - 30) / gy));
     finalize(L);
+
+    // Fleet, spread over the stations
+    const starts = over.starts || Array.from({ length: g.robots }, (_, i) => L.stations[Math.floor(((i + 0.5) * L.stations.length) / g.robots)].id);
+    starts.forEach((start, i) => L.robots.push({ id: 'AMR-' + pad2(i + 1), color: FLEET_COLORS[i], start }));
 
     // Pedestrians: a walkway along each dock apron (crossing the dock lanes on zebra crosswalks),
     // with work spots in the gaps between the staged pallets.
     const peds = { nodes: [], edges: [], walkers: [] };
     const north = [], south = [];
-    [[156, 'n', -1], [844, 's', 1]].forEach(([y, pre, side]) => {
-      const stops = [{ x: 60 }, { x: 1540 }];
+    const walks = [[ROWS[0] - 44, 'n', -1]];
+    if (ns) walks.push([LAST + 44, 's', 1]);
+    walks.forEach(([y, pre, side]) => {
+      const stops = [{ x: 60 }, { x: X1 - 30 }];
       COLS.forEach((x) => stops.push({ x: x - 44 }, { x: x + 44 }));
-      L.areas.filter((a) => a.kind === 'staging' && (side < 0 ? a.y1 < 500 : a.y0 > 500)).forEach((a) => {
+      L.areas.filter((a) => a.kind === 'staging' && (side < 0 ? a.y1 < ROWS[0] : a.y0 > LAST)).forEach((a) => {
         const w = a.x1 - a.x0, cols = Math.max(1, Math.floor((w - 16) / 58)), gx = (w - cols * 48) / (cols + 1);
         if (gx < 20) return;
         for (let c = 0; c < cols - 1; c++) stops.push({ x: a.x0 + gx + c * (48 + gx) + 48 + gx / 2, gap: true });
@@ -226,25 +308,55 @@
       });
     });
     const spotsOf = (ids, test) => ids.filter((id) => {
-      const n = peds.nodes.find((q) => q[0] === id);
-      return n[3].spot && test(n[1]);
+      const q = peds.nodes.find((p) => p[0] === id);
+      return q[3].spot && test(q[1]);
     });
-    // Shared aisles: a supervisor and an auditor walk the robot lanes between rack faces
-    const W = [-1, 0], E = [1, 0], N = [0, -1], S = [0, 1];
-    const lane = laneWalks(L, peds, [
-      ['la1', 'A1', 'J05', 75, W], ['la2', 'A2', 'J06', 75, W], ['la3', 'J06', 'B2', 75, E], ['la4', 'J07', 'B3', 75, E],
-      ['la5', 'B1', 'J09', 75, E], ['la6', 'B3', 'J11', 75, W], ['la7', 'J12', 'C4', 75, E], ['la8', 'A4', 'J08', 75, W],
-      ['lc1', 'A1', 'A2', 180, S], ['lc2', 'B1', 'B2', 180, N], ['lc3', 'B2', 'B3', 180, S], ['lc4', 'B3', 'B4', 180, N],
-      ['lc5', 'C2', 'C3', 180, N], ['lc6', 'A3', 'A4', 180, S],
-    ]);
-    peds.walkers = [
-      { id: 'P1', role: 'Dock operator', vest: '#d8e02a', hat: '#f2f2ee', home: spotsOf(north, (x) => x < 800) },
-      { id: 'P2', role: 'Dock operator', vest: '#f08a24', hat: '#f2c230', home: spotsOf(north, (x) => x > 800) },
-      { id: 'P3', role: 'Shipping clerk', vest: '#d8e02a', hat: '#3b6fd1', home: spotsOf(south, () => true) },
-      { id: 'P4', role: 'Shift supervisor', vest: '#f08a24', hat: '#f2f2ee', home: lane },
-      { id: 'P5', role: 'Inventory auditor', vest: '#d8e02a', hat: '#2f9e62', home: lane.filter((id) => id[1] === 'a') },
-    ];
+    // Shared aisles: rack-face work spots in the robot lanes, one per aisle section and one on
+    // every other cross-aisle segment (on the racking side)
+    let laneSpots = over.laneSpots;
+    if (!laneSpots) {
+      laneSpots = [];
+      COLS.forEach((x, ci) => MIDS.forEach((y, j) => {
+        laneSpots.push(['la' + (laneSpots.length + 1), ROW_IDS[j] + (ci + 1), jid(ci, j), 75, (ci + j) % 2 ? E_ : W_]);
+      }));
+      let k = 0;
+      ROW_IDS.forEach((r, j) => {
+        for (let c = 0; c < n - 1; c += 2) {
+          const side = j === 0 ? S_ : j === m - 1 ? N_ : (c / 2 + j) % 2 ? N_ : S_;
+          laneSpots.push(['lc' + ++k, r + (c + 1), r + (c + 2), 180, side]);
+        }
+      });
+    }
+    const lane = laneWalks(L, peds, laneSpots);
+    const half = L.W / 2;
+    const dock = ns
+      ? [[], [['Dock operator', spotsOf(north, () => true)]],
+        [['Dock operator', spotsOf(north, () => true)], ['Shipping clerk', spotsOf(south, () => true)]],
+        [['Dock operator', spotsOf(north, (x) => x < half)], ['Dock operator', spotsOf(north, (x) => x > half)], ['Shipping clerk', spotsOf(south, () => true)]]]
+      : [[], [['Dock operator', spotsOf(north, () => true)]],
+        [['Dock operator', spotsOf(north, (x) => x < half)], ['Dock operator', spotsOf(north, (x) => x > half)]],
+        [['Dock operator', spotsOf(north, (x) => x < half)], ['Dock operator', spotsOf(north, (x) => x > half)], ['Shipping clerk', spotsOf(north, () => true)]]];
+    const roles = dock[g.dockWorkers].concat([
+      ['Shift supervisor', lane], ['Inventory auditor', lane.filter((id) => id[1] === 'a')],
+    ].slice(0, g.aisleWalkers));
+    peds.walkers = roles.map(([role, home], i) => Object.assign({ id: 'P' + (i + 1), role }, PEOPLE_COLORS[i], { home }));
     return addPeds(L, peds);
+  }
+
+  // ======================================================================== Instance 1 · Bay 01
+  // The cross-aisle grid preset: four storage aisles, three cross-aisles, pick-face bays cut into
+  // the racking, and dock doors on the north and south walls.
+  function buildBay01() {
+    return buildGrid(GRID_DEFAULTS, {
+      id: 'bay-01', slug: 'instance-1', instance: 1, name: 'Bay 01', rev: 7,
+      starts: ['S02', 'S08', 'S13'],
+      laneSpots: [
+        ['la1', 'A1', 'J05', 75, W_], ['la2', 'A2', 'J06', 75, W_], ['la3', 'J06', 'B2', 75, E_], ['la4', 'J07', 'B3', 75, E_],
+        ['la5', 'B1', 'J09', 75, E_], ['la6', 'B3', 'J11', 75, W_], ['la7', 'J12', 'C4', 75, E_], ['la8', 'A4', 'J08', 75, W_],
+        ['lc1', 'A1', 'A2', 180, S_], ['lc2', 'B1', 'B2', 180, N_], ['lc3', 'B2', 'B3', 180, S_], ['lc4', 'B3', 'B4', 180, N_],
+        ['lc5', 'C2', 'C3', 180, N_], ['lc6', 'A3', 'A4', 180, S_],
+      ],
+    });
   }
 
   // ======================================================================== Instance 2 · Bay 02
@@ -527,13 +639,43 @@
   }
 
   // ======================================================================== registry & routing
+  // Built-in instances, then the ones created in this browser (store.js), by instance number.
   const layouts = { 'bay-01': buildBay01(), 'bay-02': buildBay02() };
   const list = [layouts['bay-01'], layouts['bay-02']];
+
+  /** A created instance: the grid generator run on its saved settings. */
+  function customLayout(rec) {
+    const L = buildGrid(rec, {
+      id: 'custom-' + rec.id, slug: 'instance-' + rec.n, instance: rec.n, name: rec.name, rev: rec.rev || 1,
+    });
+    L.custom = true;
+    L.record = rec;
+    L.spec = gridSpec(rec);
+    return L;
+  }
+  function registerLayout(rec) {
+    const L = customLayout(rec);
+    const i = list.findIndex((x) => x.id === L.id);
+    if (i >= 0) list[i] = L; else list.push(L);
+    list.sort((a, b) => a.instance - b.instance);
+    layouts[L.id] = L;
+    return L;
+  }
+  function unregisterLayout(id) {
+    const i = list.findIndex((x) => x.id === id);
+    if (i >= 0) list.splice(i, 1);
+    delete layouts[id];
+  }
+  for (const rec of WH.store ? WH.store.list() : []) {
+    try { registerLayout(rec); } catch (e) { if (root.console) root.console.warn('Skipped a saved instance that could not be built', rec, e); }
+  }
 
   function routeFromHash() {
     const h = ((root.location && root.location.hash) || '').replace(/^#/, '');
     const hit = list.find((l) => l.slug === h);
-    return hit ? { view: 'console', layout: hit.id } : { view: 'home', layout: null };
+    if (hit) return { view: 'console', layout: hit.id };
+    // A link to an instance that was deleted (or created in another browser)
+    return { view: 'home', layout: null, missing: /^instance-\d+$/.test(h) ? h : null };
   }
   // WH_LAYOUT lets headless tools (stress test) pick a layout without a URL.
   const route = root.WH_LAYOUT ? { view: 'console', layout: root.WH_LAYOUT } : routeFromHash();
@@ -543,4 +685,13 @@
   WH.route = route;
   WH.world = layouts[route.layout] || layouts['bay-01'];
   WH.geom = { buildPath, angDiff, TAU };
+  WH.grid = {
+    LIMITS: GRID_LIMITS, DEFAULTS: GRID_DEFAULTS, FLEET_COLORS,
+    spec: gridSpec, maxRobots: (s) => gridMaxRobots(gridSpec(s)), summary: (s) => gridSummary(gridSpec(s)),
+    /** Build a layout from settings without registering it (the create form's live preview). */
+    build: (s, over) => buildGrid(s, over),
+    register: registerLayout,
+    unregister: unregisterLayout,
+    nextNumber: () => list.reduce((mx, l) => Math.max(mx, l.instance), 0) + 1,
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

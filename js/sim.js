@@ -147,7 +147,7 @@
       this.contacts = new Set();
       this.robots = ROBOT_DEFS.map((d, i) => this.makeRobot(d, i));
       this.humans = ((Wd.peds && Wd.peds.walkers) || []).map((d, i) => this.makeHuman(d, i));
-      this.emit('system', ['Session started: 3 robots connected, 16 stations loaded']);
+      this.emit('system', [`Session started: ${this.robots.length} robot${this.robots.length === 1 ? '' : 's'} connected, ${Wd.stations.length} stations loaded`]);
     }
 
     makeRobot(d, i) {
@@ -1332,13 +1332,11 @@
           h.waitT = 0;
         }
         h.state = 'walk';
-        // Give way to a colleague just ahead (lower id keeps walking, so nobody deadlocks)
+        // Give way to a colleague walking just ahead (lower id keeps walking, so nobody deadlocks).
+        // Never on a crosswalk, and never to someone standing still: they may be waiting for a
+        // robot that is itself waiting for this person to clear the lane.
         let give = false;
-        for (const o of this.humans) {
-          if (o.i >= h.i) continue;
-          const dx = o.x - h.x, dy = o.y - h.y;
-          if (dx * dx + dy * dy < 26 * 26 && dx * Math.cos(dir) + dy * Math.sin(dir) > 0) give = true;
-        }
+        if (!(e.cross && h.t > 0)) give = this.colleagueAhead(h, Math.cos(dir), Math.sin(dir));
         let rest = e.len - h.t;
         for (let k = h.k + 1; k < h.edges.length; k++) rest += h.edges[k].len;
         const target = give ? 0 : Math.min(h.speed * (e.cross ? 1.15 : 1), 8 + rest * 2.2);
@@ -1364,6 +1362,15 @@
         h.y = A2.y + (B2.y - A2.y) * f;
         this.turnHuman(h, Math.atan2(B2.y - A2.y, B2.x - A2.x), dt);
       }
+    }
+
+    colleagueAhead(h, ux, uy) {
+      for (const o of this.humans) {
+        if (o.i >= h.i || o.state !== 'walk' || o.v < 5) continue;
+        const dx = o.x - h.x, dy = o.y - h.y;
+        if (dx * dx + dy * dy < 26 * 26 && dx * ux + dy * uy > 0) return true;
+      }
+      return false;
     }
 
     dwellHuman(h, dt) {
@@ -1413,12 +1420,7 @@
       const th = this.laneThreat(h, ux, uy, rx, ry);
       if (th.moving >= 0) { h.asideT = 0.7; h.asideFor = th.moving; }
       else if ((h.asideT -= dt) <= 0) h.asideFor = -1;
-      let give = false;
-      for (const o of this.humans) {
-        if (o.i >= h.i) continue;
-        const dx = o.x - h.x, dy = o.y - h.y;
-        if (dx * dx + dy * dy < 26 * 26 && dx * ux + dy * uy > 0) give = true;
-      }
+      const give = this.colleagueAhead(h, ux, uy);
       const entry = e.len - CFG.boxLen;
       const needBox = B.box && h.inBox !== B.id;
       if (h.inBox) {

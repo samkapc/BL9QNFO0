@@ -11,7 +11,8 @@ const root = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
 const html = read('index.html');
 const css = read('styles.css');
-const scripts = ['js/world.js', 'js/sim.js', 'js/render.js', 'js/ui.js', 'js/home.js', 'js/main.js'].map(read);
+// Same order as the <script> tags in index.html
+const scripts = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map((m) => read(m[1]));
 
 const title = html.match(/<title>[\s\S]*?<\/title>/)[0];
 const fonts = html.match(/<link\s+rel="stylesheet"\s+href="https:\/\/fonts[^>]+>/)[0];
