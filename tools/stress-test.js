@@ -20,6 +20,7 @@ function run(seed, chaos) {
   const steps = Math.round((hours * 3600) / DT);
   const stuck = sim.robots.map(() => ({ since: 0, max: 0, at: 0 }));
   const idle = sim.robots.map(() => 0);
+  let maxWait = 0;
   let nextChaos = 20;
   for (let i = 0; i < steps; i++) {
     sim.step(DT);
@@ -36,15 +37,16 @@ function run(seed, chaos) {
       if (d > stuck[k].max) { stuck[k].max = d; stuck[k].at = sim.t; }
       if (r.mode === 'idle') idle[k] += DT;
     });
+    for (const h of sim.humans) if (h.waitT > maxWait) maxWait = h.waitT;
   }
-  return { sim, stuck, idle };
+  return { sim, stuck, idle, maxWait };
 }
 
 const counts = {};
 let failed = false;
 for (let s = 1; s <= seeds; s++) {
   for (const chaos of [false, true]) {
-    const { sim, stuck, idle } = run(s * 7919, chaos);
+    const { sim, stuck, idle, maxWait } = run(s * 7919, chaos);
     const st = sim.stats;
     for (const ev of sim.events) counts[ev.type] = (counts[ev.type] || 0) + 1;
     const maxStuck = Math.max(...stuck.map((x) => x.max));
@@ -53,7 +55,8 @@ for (let s = 1; s <= seeds; s++) {
       `seed ${String(s * 7919).padStart(5)} ${chaos ? 'chaos' : 'calm '} | deliveries ${String(st.deliveries).padStart(4)} (${perHour}/h)` +
       ` | collisions ${st.collisions} | yields ${st.yields} | resolved ${st.conflicts} | reroutes ${st.reroutes}` +
       ` | negotiations ${st.negotiations} | deadlocks ${st.deadlocks} | minSep ${st.minSep.toFixed(1)}` +
-      ` | max stall ${maxStuck.toFixed(1)} s @${stuck.map((x) => x.at.toFixed(0)).join('/')} | idle ${idle.map((x) => (100 * x / (hours * 3600)).toFixed(1) + '%').join(' ')}`
+      ` | max stall ${maxStuck.toFixed(1)} s @${stuck.map((x) => x.at.toFixed(0)).join('/')} | idle ${idle.map((x) => (100 * x / (hours * 3600)).toFixed(1) + '%').join(' ')}` +
+      ` | people ${sim.humans.length}: ped stops ${st.pedStops}, kerb waits ${st.pedWaits || 0}, max kerb wait ${maxWait.toFixed(1)} s, closest ${isFinite(st.minPedSep) ? st.minPedSep.toFixed(1) : '-'}`
     );
     if (st.collisions > 0 || maxStuck > 45) failed = true;
   }

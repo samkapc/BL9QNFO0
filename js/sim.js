@@ -35,6 +35,11 @@
     dockSpeed: 34,
     transferTime: 2.1,
     idleDelay: 0.8,
+    humanR: 11.5,        // person body radius (≈ 0.46 m shoulder width)
+    pedSafe: 40,         // protective field against people (path to person)
+    pedWarn: 58,         // warning field: slow down when a person is this close to the path
+    pedSlow: 50,         // speed cap inside the warning field (≈ 1 m/s)
+    crossClear: 42,      // a crosswalk is clear when no robot is within this distance of it
     unitsPerM: Wd.UNITS_PER_M,
   };
 
@@ -69,6 +74,18 @@
       [r.x - c * hl + s * hw, r.y - s * hl - c * hw],
       [r.x - c * hl - s * hw, r.y - s * hl + c * hw],
     ];
+  }
+  function pointSeg(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+    return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  }
+  /** Distance from a point to a robot's rectangular footprint (0 when inside). */
+  function footprintDist(r, px, py) {
+    const c = Math.cos(r.h), s = Math.sin(r.h), dx = px - r.x, dy = py - r.y;
+    const lx = dx * c + dy * s, ly = -dx * s + dy * c;
+    const ex = Math.max(0, Math.abs(lx) - CFG.L / 2), ey = Math.max(0, Math.abs(ly) - CFG.Wr / 2);
+    return Math.hypot(ex, ey);
   }
   function obbOverlap(a, b) {
     const A = footprint(a), B = footprint(b);
@@ -106,7 +123,7 @@
       this.fx = { links: [], rings: [], marks: [], ghosts: [], taskLinks: [], edges: [] };
       this.stats = {
         deliveries: 0, collisions: 0, conflicts: 0, yields: 0, reroutes: 0,
-        negotiations: 0, deadlocks: 0, minSep: Infinity, tasksCreated: 0,
+        negotiations: 0, deadlocks: 0, minSep: Infinity, tasksCreated: 0, pedStops: 0, minPedSep: Infinity,
       };
       this.negotiated = Object.create(null);
       this.nextIntent = 0.6;
@@ -115,6 +132,7 @@
       this.deadlockCD = 0;
       this.contacts = new Set();
       this.robots = ROBOT_DEFS.map((d, i) => this.makeRobot(d, i));
+      this.humans = ((Wd.peds && Wd.peds.walkers) || []).map((d, i) => this.makeHuman(d, i));
       this.emit('system', ['Session started: 3 robots connected, 16 stations loaded']);
     }
 
@@ -133,6 +151,7 @@
         replanCD: 0, lastReroute: -99, rerouteText: '', pendingReplan: null, needRoute: false,
         expectHold: null,
         beacon: 0.4 + i * 0.8,
+        humanStop: -1, humanNear: false,
       };
       this.holdNode(r, st.id);
       return r;
@@ -184,6 +203,7 @@
       if (this.t >= this.nextIntent) { this.nextIntent = this.t + 0.3; this.intentCheck(); }
       this.arbitrate();
       this.handleWaits(dt);
+      this.updateHumans(dt);
       for (const r of this.robots) this.move(r, dt);
       for (const r of this.robots) this.progress(r);
       this.checkSafety();
@@ -999,15 +1019,22 @@
         r.v = 0;
         return;
       }
-      if (r.motion !== 'drive' || !r.route) { r.v = 0; return; }
+      if (r.motion !== 'drive' || !r.route) { r.v = 0; r.humanStop = -1; r.humanNear = false; return; }
       const R = r.route, geo = R.geo;
       let stopS = geo.length;
       const gi = R.idx + R.granted;
       if (gi < R.nodes.length) stopS = Math.min(stopS, R.nodeS[gi] - CFG.stopDist);
+      r.humanNear = false;
       const sf = this.safetyStop(r, stopS);
-      if (sf && sf.s < stopS) { stopS = sf.s; r.follow = sf.q; }
+      let pedStop = -1;
+      if (sf && sf.s < stopS) {
+        stopS = sf.s;
+        if (sf.human != null) pedStop = sf.human; else r.follow = sf.q;
+      }
       const d = stopS - r.s;
       let vLim = Math.min(CFG.vMax, Math.sqrt(2 * CFG.decel * Math.max(0, d)));
+      // Scanner warning field: slow down while a person is close to the path ahead
+      if (r.humanNear) vLim = Math.min(vLim, CFG.pedSlow);
       for (const c of geo.corners) {
         if (c.s1 < r.s) continue;
         if (c.s0 > r.s + 160) break;
@@ -1024,6 +1051,19 @@
       geo.at(r.s, tmp);
       r.x = tmp.x; r.y = tmp.y; r.h = tmp.h;
       if (gi >= R.nodes.length && r.s >= geo.length - 0.05 && r.v < 1) { r.s = geo.length; r.v = 0; r.arrived = true; }
+      // Stopped for a person: log it once per stop
+      const stoppedForPed = pedStop >= 0 && r.v < 3 && stopS - r.s < 2;
+      if (stoppedForPed && r.humanStop < 0) {
+        const h = this.humans[pedStop];
+        const cw = h.path && h.edges[h.k] && h.edges[h.k].cross;
+        this.stats.pedStops++;
+        const ce = R.idx < R.nodes.length ? Wd.edgeBetween(r.prev, R.nodes[R.idx]) : null;
+        this.emit('safety', cw
+          ? [{ r: r.i }, ' stopped for a person on the crosswalk at ', { e: cw }]
+          : [{ r: r.i }, ' stopped: person in its path', ce ? ' on ' : '', ce ? { e: ce.id } : ''],
+          'ped|' + r.i, 15);
+      }
+      r.humanStop = stoppedForPed ? pedStop : -1;
     }
 
     safetyStop(r, limitS) {
@@ -1045,7 +1085,170 @@
           }
         }
       }
+      // People: the obstacle is where the person is and where they are about to walk
+      // (a person on a crosswalk blocks the rest of that crosswalk). People waiting at the
+      // kerb stand outside the lane and are not treated as obstacles.
+      const lookP = Math.max(look, Math.min(limitS, r.s + 130));
+      for (const h of this.humans) {
+        if (h.state === 'wait') continue;
+        const ob = this.humanObstacle(h);
+        const d0 = pointSeg(r.x, r.y, ob.ax, ob.ay, ob.bx, ob.by);
+        if (d0 > lookP - r.s + CFG.pedWarn) continue;
+        for (let k = k0; k < geo.n && geo.cs[k] <= lookP; k++) {
+          const dq = pointSeg(geo.xs[k], geo.ys[k], ob.ax, ob.ay, ob.bx, ob.by);
+          if (dq < CFG.pedWarn) r.humanNear = true;
+          if (geo.cs[k] <= look && dq < CFG.pedSafe && dq < d0 - 0.05) {
+            const s = Math.max(r.s, geo.cs[k - 1]);
+            if (!best || s < best.s) best = { s, q: -1, human: h.i };
+            break;
+          }
+        }
+      }
       return best;
+    }
+
+    humanObstacle(h) {
+      if (h.state !== 'walk' || !h.path) return { ax: h.x, ay: h.y, bx: h.x, by: h.y };
+      const e = h.edges[h.k];
+      const B = Wd.peds.nodes[h.path[h.k + 1]];
+      if (e.cross) return { ax: h.x, ay: h.y, bx: B.x, by: B.y };
+      const dx = B.x - h.x, dy = B.y - h.y, l = Math.hypot(dx, dy) || 1, f = Math.min(1, 16 / l);
+      return { ax: h.x, ay: h.y, bx: h.x + dx * f, by: h.y + dy * f };
+    }
+
+    // ------------------------------------------------------------------ people
+    makeHuman(d, i) {
+      const P = Wd.peds;
+      const start = P.nodes[d.home[Math.floor(this.rand() * d.home.length)]];
+      return {
+        i, id: d.id, role: d.role, vest: d.vest, hat: d.hat, home: d.home,
+        x: start.x, y: start.y, h: start.face != null ? start.face : 0, v: 0,
+        state: 'dwell', timer: 0.5 + this.rand() * 4, node: start.id, faceH: start.face,
+        path: null, edges: null, k: 0, t: 0, phase: this.rand() * 6.28,
+        speed: 54 + this.rand() * 14, waitT: 0, goal: null,
+      };
+    }
+
+    pedPath(from, to) {
+      const P = Wd.peds;
+      const dist = Object.create(null), prev = Object.create(null), done = new Set();
+      dist[from] = 0;
+      for (;;) {
+        let u = null;
+        for (const id in dist) if (!done.has(id) && (u === null || dist[id] < dist[u])) u = id;
+        if (u === null) return null;
+        if (u === to) break;
+        done.add(u);
+        for (const { to: v, e } of P.adj[u]) {
+          const c = dist[u] + e.len + (e.cross ? 40 : 0);
+          if (dist[v] === undefined || c < dist[v]) { dist[v] = c; prev[v] = { u, e }; }
+        }
+      }
+      const nodes = [to], edges = [];
+      for (let v = to; v !== from; v = prev[v].u) { nodes.push(prev[v].u); edges.push(prev[v].e); }
+      return { nodes: nodes.reverse(), edges: edges.reverse() };
+    }
+
+    pickHumanTarget(h) {
+      const choices = h.home.filter((id) => id !== h.node);
+      const goal = choices[Math.floor(this.rand() * choices.length)];
+      const p = goal && this.pedPath(h.node, goal);
+      if (!p || p.nodes.length < 2) { h.timer = 2; return; }
+      h.path = p.nodes; h.edges = p.edges; h.k = 0; h.t = 0; h.goal = goal;
+      h.state = 'walk';
+    }
+
+    /** A person may step onto a crosswalk when no robot is on it and none is about to reach it. */
+    crosswalkClear(A, B) {
+      for (const r of this.robots) {
+        if (pointSeg(r.x, r.y, A.x, A.y, B.x, B.y) < CFG.crossClear) return false;
+        if (!r.route || r.motion !== 'drive' || r.v < 3) continue;
+        const geo = r.route.geo;
+        const look = r.s + (r.v * r.v) / (2 * CFG.decel) + 90;
+        for (let k = geo.index(r.s) + 1; k < geo.n && geo.cs[k] <= look; k += 2) {
+          if (pointSeg(geo.xs[k], geo.ys[k], A.x, A.y, B.x, B.y) < CFG.crossClear) return false;
+        }
+      }
+      return true;
+    }
+
+    humanStatus(h) {
+      if (h.state === 'wait') return 'Waiting at the crosswalk for robot traffic to pass';
+      if (h.state === 'walk') {
+        const e = h.edges[h.k];
+        return e && e.cross && h.t > 0 ? 'Crossing the robot lane on the crosswalk' : 'Walking to the next work spot';
+      }
+      return {
+        'Picker': 'Picking from the rack face', 'Packer': 'Packing at the cell', 'Dock operator': 'Checking staged pallets',
+        'Shipping clerk': 'Checking outbound pallets', 'Staging operator': 'Sorting totes', 'Stock checker': 'Counting pallet stock',
+      }[h.role] || 'Working';
+    }
+
+    turnHuman(h, target, dt) {
+      if (target == null) return;
+      const d = G.angDiff(target, h.h);
+      const step = 7 * dt;
+      h.h += Math.abs(d) <= step ? d : Math.sign(d) * step;
+    }
+
+    updateHumans(dt) {
+      const P = Wd.peds;
+      for (const h of this.humans) {
+        if (h.state === 'dwell') {
+          h.v = 0;
+          this.turnHuman(h, h.faceH, dt);
+          h.timer -= dt;
+          if (h.timer <= 0) this.pickHumanTarget(h);
+          continue;
+        }
+        const A = P.nodes[h.path[h.k]], B = P.nodes[h.path[h.k + 1]];
+        const e = h.edges[h.k];
+        const dir = Math.atan2(B.y - A.y, B.x - A.x);
+        // Wait at the kerb until the crosswalk is clear; once on it, keep going
+        if (e.cross && h.t < 0.01) {
+          if (!this.crosswalkClear(A, B)) {
+            if (h.state !== 'wait') this.stats.pedWaits = (this.stats.pedWaits || 0) + 1;
+            h.state = 'wait';
+            h.v = 0;
+            h.waitT += dt;
+            this.turnHuman(h, dir, dt);
+            continue;
+          }
+          h.waitT = 0;
+        }
+        h.state = 'walk';
+        // Give way to a colleague just ahead (lower id keeps walking, so nobody deadlocks)
+        let give = false;
+        for (const o of this.humans) {
+          if (o.i >= h.i) continue;
+          const dx = o.x - h.x, dy = o.y - h.y;
+          if (dx * dx + dy * dy < 26 * 26 && dx * Math.cos(dir) + dy * Math.sin(dir) > 0) give = true;
+        }
+        let rest = e.len - h.t;
+        for (let k = h.k + 1; k < h.edges.length; k++) rest += h.edges[k].len;
+        const target = give ? 0 : Math.min(h.speed * (e.cross ? 1.15 : 1), 8 + rest * 2.2);
+        h.v += clamp(target - h.v, -180 * dt, 120 * dt);
+        h.t += h.v * dt;
+        h.phase += h.v * dt * 0.34;
+        if (h.t >= e.len) {
+          h.k++;
+          h.t = 0;
+          if (h.k >= h.path.length - 1) {
+            h.node = h.goal;
+            h.x = B.x; h.y = B.y;
+            h.state = 'dwell';
+            h.faceH = B.face != null ? B.face : h.h;
+            h.timer = (h.role === 'Picker' ? 3.5 : h.role === 'Packer' ? 5 : 2.5) + this.rand() * 4;
+            h.path = null;
+            continue;
+          }
+        }
+        const A2 = P.nodes[h.path[h.k]], B2 = P.nodes[h.path[h.k + 1]], e2 = h.edges[h.k];
+        const f = e2.len ? h.t / e2.len : 1;
+        h.x = A2.x + (B2.x - A2.x) * f;
+        h.y = A2.y + (B2.y - A2.y) * f;
+        this.turnHuman(h, Math.atan2(B2.y - A2.y, B2.x - A2.x), dt);
+      }
     }
 
     progress(r) {
@@ -1084,6 +1287,21 @@
               this.contacts.add(key);
               this.stats.collisions++;
               this.emit('alert', ['Collision detected: ', { r: a }, ' and ', { r: b }]);
+            }
+          } else this.contacts.delete(key);
+        }
+        // Robot–person contacts (robot footprint against a 10-unit body radius)
+        for (const h of this.humans) {
+          const r = rs[a];
+          const d = Math.hypot(r.x - h.x, r.y - h.y);
+          if (d < this.stats.minPedSep) this.stats.minPedSep = d;
+          const key = a + '-h' + h.i;
+          if (d < 45 && footprintDist(r, h.x, h.y) < CFG.humanR) {
+            if (!this.contacts.has(key)) {
+              this.contacts.add(key);
+              this.stats.collisions++;
+              this.stats.pedCollisions = (this.stats.pedCollisions || 0) + 1;
+              this.emit('alert', ['Collision detected: ', { r: a }, ' and person ' + h.id]);
             }
           } else this.contacts.delete(key);
         }
@@ -1212,6 +1430,7 @@
       if (r.mode === 'idle') return { key: 'idle', label: 'Idle', tone: 'idle', text: `Parked at ${r.station}, awaiting task` };
       if (r.mode === 'loading') return { key: 'work', label: 'Loading', tone: 'work', text: `Receiving payload at ${r.station}` };
       if (r.mode === 'unloading') return { key: 'work', label: 'Unloading', tone: 'work', text: `Handing off payload at ${r.station}` };
+      if (r.humanStop >= 0) return { key: 'ped', label: 'Stopped', tone: 'wait', text: `Person ${this.humans[r.humanStop].id} crossing ahead, waiting` };
       const b = r.block;
       if (b && b.kind === 'obstruction') return { key: 'replan', label: 'Replanning', tone: 'wait', text: `${Wd.edgeMap[b.edge].name} blocked, computing new route` };
       if (b && b.logged && b.kind === 'node') {
@@ -1228,7 +1447,7 @@
       if (r.motion === 'rotate') return { key: 'turn', label: 'Turning', tone: 'drive', text: 'Rotating in place to route heading' };
       return {
         key: 'move', label: r.mode === 'toPickup' ? 'To pickup' : 'In transit', tone: 'drive',
-        text: 'Via ' + this.viaText(r),
+        text: r.humanNear && r.v > 2 ? 'Slowing: person near path' : 'Via ' + this.viaText(r),
       };
     }
 

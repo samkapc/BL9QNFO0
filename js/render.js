@@ -244,6 +244,7 @@
       this.drawFloor(ctx);
       this.drawAreas(ctx, false);
       this.drawLanes(ctx);
+      this.drawWalkways(ctx);
       const rng = mulberry32(20240517);
       Wd.racks.forEach((rk) => this.drawRack(ctx, rk, rng));
       this.drawBays(ctx);
@@ -601,6 +602,147 @@
       }
     }
 
+    // Painted pedestrian walkways (green), and zebra crosswalks where they cross a robot lane
+    drawWalkways(ctx) {
+      const P = Wd.peds;
+      if (!P) return;
+      const hw = 11;
+      const green = C.light ? '40,145,78' : '63,168,107';
+      for (const e of P.edges) {
+        const A = P.nodes[e.a], B = P.nodes[e.b];
+        const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, nx = -uy, ny = ux;
+        if (e.cross) {
+          // Stripes run with the robot traffic, repeated along the walking direction
+          ctx.fillStyle = C.light ? 'rgba(255,255,255,0.95)' : 'rgba(215,220,226,0.24)';
+          const n = Math.floor(e.len / 10);
+          const off = (e.len - n * 10) / 2 + 2.5;
+          for (let i = 0; i < n; i++) {
+            const cx = A.x + ux * (off + i * 10), cy = A.y + uy * (off + i * 10);
+            ctx.beginPath();
+            ctx.moveTo(cx + nx * 14 - ux * 2.5, cy + ny * 14 - uy * 2.5);
+            ctx.lineTo(cx + nx * 14 + ux * 2.5, cy + ny * 14 + uy * 2.5);
+            ctx.lineTo(cx - nx * 14 + ux * 2.5, cy - ny * 14 + uy * 2.5);
+            ctx.lineTo(cx - nx * 14 - ux * 2.5, cy - ny * 14 - uy * 2.5);
+            ctx.closePath();
+            ctx.fill();
+          }
+          if (C.light) {
+            ctx.strokeStyle = 'rgba(150,158,166,0.6)';
+            ctx.lineWidth = this.px(1);
+            ctx.beginPath();
+            ctx.moveTo(A.x + nx * 15, A.y + ny * 15); ctx.lineTo(B.x + nx * 15, B.y + ny * 15);
+            ctx.moveTo(A.x - nx * 15, A.y - ny * 15); ctx.lineTo(B.x - nx * 15, B.y - ny * 15);
+            ctx.stroke();
+          }
+          continue;
+        }
+        if (!e.vis) continue;
+        ctx.beginPath();
+        ctx.moveTo(A.x + nx * hw, A.y + ny * hw); ctx.lineTo(B.x + nx * hw, B.y + ny * hw);
+        ctx.lineTo(B.x - nx * hw, B.y - ny * hw); ctx.lineTo(A.x - nx * hw, A.y - ny * hw);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(${green},${C.light ? 0.1 : 0.06})`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(${green},${C.light ? 0.75 : 0.42})`;
+        ctx.lineWidth = this.px(1.2);
+        ctx.beginPath();
+        ctx.moveTo(A.x + nx * hw, A.y + ny * hw); ctx.lineTo(B.x + nx * hw, B.y + ny * hw);
+        ctx.moveTo(A.x - nx * hw, A.y - ny * hw); ctx.lineTo(B.x - nx * hw, B.y - ny * hw);
+        ctx.stroke();
+        // Pedestrian pictogram painted on longer walkway sections
+        if (e.len > 150) {
+          const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+          ctx.save();
+          ctx.translate(mx, my);
+          ctx.rotate(Math.atan2(uy, ux));
+          ctx.strokeStyle = `rgba(${green},${C.light ? 0.8 : 0.5})`;
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.lineWidth = 1.6;
+          ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.arc(0, -5.5, 1.8, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(0, -3); ctx.lineTo(0, 2.5); ctx.moveTo(0, 2.5); ctx.lineTo(-2.5, 7); ctx.moveTo(0, 2.5); ctx.lineTo(2.5, 7);
+          ctx.moveTo(-3, -1); ctx.lineTo(3, 0.5);
+          ctx.stroke();
+          ctx.restore();
+          ctx.lineCap = 'butt';
+        }
+      }
+    }
+
+    // A crosswalk in use: outlined while someone is on it or waiting to cross
+    drawCrosswalkUse(ctx) {
+      const P = Wd.peds;
+      if (!P) return;
+      for (const h of this.sim.humans) {
+        if (!h.path) continue;
+        const e = h.edges[h.k];
+        if (!e || !e.cross) continue;
+        const onIt = h.state === 'walk' && h.t > 0;
+        if (!onIt && h.state !== 'wait') continue;
+        const A = P.nodes[e.a], B = P.nodes[e.b];
+        const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, nx = -uy, ny = ux;
+        ctx.beginPath();
+        ctx.moveTo(A.x + nx * 17, A.y + ny * 17); ctx.lineTo(B.x + nx * 17, B.y + ny * 17);
+        ctx.lineTo(B.x - nx * 17, B.y - ny * 17); ctx.lineTo(A.x - nx * 17, A.y - ny * 17);
+        ctx.closePath();
+        ctx.fillStyle = rgba(onIt ? C.warn : C.ok, 0.1);
+        ctx.fill();
+        ctx.strokeStyle = rgba(onIt ? C.warn : C.ok, 0.85);
+        ctx.lineWidth = this.px(1.4);
+        ctx.setLineDash(onIt ? [] : [4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // A person seen from above: hard hat, hi-vis vest with a reflective band, swinging arms and legs
+    drawHuman(ctx, h) {
+      const walking = h.state === 'walk' && h.v > 4;
+      const sw = walking ? Math.sin(h.phase) * 4.2 : 0;
+      if (this.layers.safety) {
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = rgba(C.warn, 0.55);
+        ctx.lineWidth = this.px(1);
+        ctx.beginPath(); ctx.arc(h.x, h.y, this.sim.cfg.pedSafe, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // Thin ring in the vest colour so people are easy to spot at full-map zoom
+      ctx.strokeStyle = rgba(h.vest, C.light ? 0.7 : 0.45);
+      ctx.lineWidth = this.px(1.2);
+      ctx.beginPath(); ctx.arc(h.x, h.y, 17, 0, Math.PI * 2); ctx.stroke();
+      ctx.save();
+      ctx.fillStyle = C.light ? 'rgba(45,52,60,0.26)' : 'rgba(0,0,0,0.5)';
+      ctx.beginPath(); ctx.ellipse(h.x + 2, h.y + 3.2, 8.5, 13.5, h.h, 0, Math.PI * 2); ctx.fill();
+      ctx.translate(h.x, h.y);
+      ctx.rotate(h.h);
+      ctx.scale(1.25, 1.25);
+      const blob = (x, y, rx, ry) => { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); };
+      ctx.fillStyle = '#2b313a';
+      blob(sw, -3.6, 4.2, 2.6);
+      blob(-sw, 3.6, 4.2, 2.6);
+      ctx.fillStyle = '#3a4250';
+      blob(-sw * 0.8, -9.2, 3.8, 2.5);
+      blob(sw * 0.8, 9.2, 3.8, 2.5);
+      ctx.fillStyle = '#d6a888';
+      blob(-sw * 0.8 + 3.2, -9.4, 1.5, 1.5);
+      blob(sw * 0.8 + 3.2, 9.4, 1.5, 1.5);
+      ctx.fillStyle = h.vest;
+      blob(0, 0, 5.4, 9.2);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.ellipse(0, 0, 5.4, 9.2, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(225,230,236,0.85)';
+      ctx.fillRect(-2.2, -8.4, 1.5, 16.8);
+      ctx.fillStyle = h.hat;
+      blob(0.8, 0, 4.7, 4.5);
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.ellipse(0.8, 0, 4.7, 4.5, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      blob(4.6, 0, 1.2, 3.2);
+      ctx.restore();
+    }
+
     drawColumns(ctx) {
       for (const c of COLUMNS) {
         this.shadow(ctx, true, 4, 1.5, 2.5);
@@ -815,6 +957,8 @@
       this.drawConflicts(ctx);
       this.drawHover(ctx);
       if (L.safety) this.drawSafety(ctx);
+      this.drawCrosswalkUse(ctx);
+      for (const h of this.sim.humans) this.drawHuman(ctx, h);
       for (const r of this.sim.robots) this.drawRobot(ctx, r);
       for (const r of this.sim.robots) this.drawTransfer(ctx, r);
       this.drawSelection(ctx);
@@ -1212,6 +1356,8 @@
     // ------------------------------------------------------------------ screen-space annotations
     tag(ctx, x, y, parts, opt) {
       opt = opt || {};
+      // Labels belong to something on the map: skip them when that thing is out of view
+      if (x < -80 || x > this.cw + 80 || y < -30 || y > this.ch + 30) return null;
       const size = opt.size || this.fs(11);
       const padX = opt.padX == null ? 5 : opt.padX;
       const h = Math.round(size + (opt.padY == null ? 7 : opt.padY));
@@ -1402,6 +1548,7 @@
     pick(px, py) {
       const p = this.toWorld(px, py);
       for (const r of this.sim.robots) if (Math.hypot(r.x - p.x, r.y - p.y) < 32) return { robot: r.i };
+      for (const h of this.sim.humans) if (Math.hypot(h.x - p.x, h.y - p.y) < 16) return { human: h.i };
       for (const st of Wd.stations) {
         if (Math.abs(st.x - p.x) < 32 && Math.abs(st.y - p.y) < 32) return { station: st.id };
         if (Math.abs(st.stand.x - p.x) < 18 && Math.abs(st.stand.y - p.y) < 28) return { station: st.id };

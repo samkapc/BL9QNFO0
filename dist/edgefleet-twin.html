@@ -233,7 +233,7 @@ body.is-home { overflow: auto; }
   min-height: 28px; padding: 4px 10px; border-top: 1px solid var(--line); background: var(--chrome);
   color: var(--text-2); font-size: 12px; white-space: nowrap;
 }
-.statusline .hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); }
+.statusline .hint { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); }
 .legend { display: inline-flex; gap: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .sw { width: 8px; height: 8px; border-radius: 1px; }
@@ -727,6 +727,43 @@ body.is-home { overflow: auto; }
     return L;
   }
 
+  // ---- Pedestrians ---------------------------------------------------------------------------
+  // People walk on their own network: painted walkways, work spots, and zebra crosswalks where a
+  // walkway crosses a robot lane (detected automatically from the lane geometry).
+  function pointSegDist(px, py, A, B) {
+    const dx = B.x - A.x, dy = B.y - A.y, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - A.x) * dx + (py - A.y) * dy) / l2)) : 0;
+    return Math.hypot(px - (A.x + dx * t), py - (A.y + dy * t));
+  }
+  function addPeds(L, spec) {
+    const P = { nodes: Object.create(null), list: [], edges: [], adj: Object.create(null), walkers: spec.walkers };
+    for (const [id, x, y, opt] of spec.nodes) {
+      const n = { id, x, y, spot: !!(opt && opt.spot), face: opt && opt.face != null ? opt.face : null };
+      P.nodes[id] = n;
+      P.list.push(n);
+      P.adj[id] = [];
+    }
+    for (const [a, b, opt] of spec.edges) {
+      const A = P.nodes[a], B = P.nodes[b];
+      const e = { a, b, len: Math.hypot(B.x - A.x, B.y - A.y), vis: !(opt && opt.hidden), cross: null };
+      const steps = Math.ceil(e.len / 4);
+      for (const re of L.edges) {
+        const half = re.kind === 'spur' ? 32 : HALF;
+        const RA = L.nodeMap[re.a], RB = L.nodeMap[re.b];
+        for (let k = 0; k <= steps && !e.cross; k++) {
+          const f = k / steps;
+          if (pointSegDist(A.x + (B.x - A.x) * f, A.y + (B.y - A.y) * f, RA, RB) < half - 2) e.cross = re.id;
+        }
+        if (e.cross) break;
+      }
+      P.edges.push(e);
+      P.adj[a].push({ to: b, e });
+      P.adj[b].push({ to: a, e });
+    }
+    L.peds = P;
+    return L;
+  }
+
   // ======================================================================== Instance 1 · Bay 01
   // A regular cross-aisle grid: four storage aisles, three cross-aisles, pick-face bays cut into
   // the racking, and dock doors on the north and south walls.
@@ -795,7 +832,44 @@ body.is-home { overflow: auto; }
     ROWS.forEach((y, i) => [430, 1150].forEach((x) => L.labels.push({ text: 'Cross-aisle ' + ROW_IDS[i], x, y: y - 22 })));
     for (let k = 0; k <= 8; k++) L.grid.xs.push(L.WALL.x0 + k * 192.5);
     for (let k = 0; k <= 5; k++) L.grid.ys.push(L.WALL.y0 + k * 188);
-    return finalize(L);
+    finalize(L);
+
+    // Pedestrians: a walkway along each dock apron (crossing the dock lanes on zebra crosswalks),
+    // with work spots in the gaps between the staged pallets.
+    const peds = { nodes: [], edges: [], walkers: [] };
+    const north = [], south = [];
+    [[156, 'n', -1], [844, 's', 1]].forEach(([y, pre, side]) => {
+      const stops = [{ x: 60 }, { x: 1540 }];
+      COLS.forEach((x) => stops.push({ x: x - 44 }, { x: x + 44 }));
+      L.areas.filter((a) => a.kind === 'staging' && (side < 0 ? a.y1 < 500 : a.y0 > 500)).forEach((a) => {
+        const w = a.x1 - a.x0, cols = Math.max(1, Math.floor((w - 16) / 58)), gx = (w - cols * 48) / (cols + 1);
+        if (gx < 20) return;
+        for (let c = 0; c < cols - 1; c++) stops.push({ x: a.x0 + gx + c * (48 + gx) + 48 + gx / 2, gap: true });
+      });
+      stops.sort((p, q) => p.x - q.x);
+      stops.forEach((s, i) => {
+        const id = pre + i;
+        peds.nodes.push([id, s.x, y, { spot: i === 0 || i === stops.length - 1, face: side * Math.PI / 2 }]);
+        if (i) peds.edges.push([pre + (i - 1), id]);
+        (side < 0 ? north : south).push(id);
+        if (s.gap) {
+          const gid = pre + 'g' + i;
+          peds.nodes.push([gid, s.x, y + side * 38, { spot: true, face: side * Math.PI / 2 }]);
+          peds.edges.push([id, gid, { hidden: true }]);
+          (side < 0 ? north : south).push(gid);
+        }
+      });
+    });
+    const spotsOf = (ids, test) => ids.filter((id) => {
+      const n = peds.nodes.find((q) => q[0] === id);
+      return n[3].spot && test(n[1]);
+    });
+    peds.walkers = [
+      { id: 'P1', role: 'Dock operator', vest: '#d8e02a', hat: '#f2f2ee', home: spotsOf(north, (x) => x < 800) },
+      { id: 'P2', role: 'Dock operator', vest: '#f08a24', hat: '#f2c230', home: spotsOf(north, (x) => x > 800) },
+      { id: 'P3', role: 'Shipping clerk', vest: '#d8e02a', hat: '#3b6fd1', home: spotsOf(south, () => true) },
+    ];
+    return addPeds(L, peds);
   }
 
   // ======================================================================== Instance 2 · Bay 02
@@ -877,7 +951,7 @@ body.is-home { overflow: auto; }
     for (let bank = 0; bank < 2; bank++) {
       for (let i = 0; i < 7; i++) {
         const x0 = 130 + 76 * i;
-        L.racks.push({ x0, x1: x0 + 52, y0: bank ? 705 : 140, y1: bank ? 1000 : 415, faces: ['left', 'right'], pitch: 27 });
+        L.racks.push({ x0, x1: x0 + 52, y0: bank ? 725 : 140, y1: bank ? 1000 : 415, faces: ['left', 'right'], pitch: 27 });
       }
     }
     L.racks.forEach((rk, i) => { rk.id = 'R' + pad2(i + 1); });
@@ -904,7 +978,55 @@ body.is-home { overflow: auto; }
     L.labels.push({ text: 'Dock doors', x: 1742, y: 450, rot: -90, size: 10.5, weight: 500 });
     for (let k = 0; k <= 9; k++) L.grid.xs.push(L.WALL.x0 + (k * (L.WALL.x1 - L.WALL.x0)) / 9);
     for (let k = 0; k <= 6; k++) L.grid.ys.push(L.WALL.y0 + (k * (L.WALL.y1 - L.WALL.y0)) / 6);
-    return finalize(L);
+    finalize(L);
+
+    // Pedestrians
+    const pn = [], pe = [];
+    const node = (id, x, y, opt) => pn.push([id, x, y, opt]);
+    const walk = (ids, opt) => { for (let i = 1; i < ids.length; i++) pe.push([ids[i - 1], ids[i], opt]); };
+    const fL = Math.PI, fR = 0, fU = -Math.PI / 2, fD = Math.PI / 2;
+    // Racking: walkways along the top of the upper bank and the top of the lower bank, the narrow
+    // pick aisles between racks (too narrow for the AMRs), and one zebra crosswalk over the main aisle.
+    const AX = [194, 270, 346, 422, 498, 574];
+    const WX = [120].concat(AX, [650]);
+    WX.forEach((x, i) => { node('wn' + i, x, 125, i === 0 || i === WX.length - 1 ? { spot: true, face: fD } : null); node('ws' + i, x, 711); });
+    walk(WX.map((_, i) => 'wn' + i));
+    walk(WX.map((_, i) => 'ws' + i));
+    AX.forEach((x, i) => {
+      const k = i + 1, pd = x === 270 || x === 422 || x === 574;
+      node('an' + k, x, 262, { spot: true, face: i % 2 ? fL : fR });
+      node('ab' + k, x, 398, { spot: true, face: pd ? fD : i % 2 ? fR : fL });
+      node('as' + k, x, 850, { spot: true, face: i % 2 ? fR : fL });
+      node('at' + k, x, 985, { spot: true, face: i % 2 ? fL : fR });
+      walk(['wn' + k, 'an' + k, 'ab' + k], { hidden: true });
+      walk(['ws' + k, 'as' + k, 'at' + k], { hidden: true });
+    });
+    node('x1', 194, 440); node('x2', 172, 478); node('xn', 172, 512); node('xs', 172, 608); node('x3', 172, 650); node('x4', 194, 690);
+    walk(['ab1', 'x1', 'x2', 'xn', 'xs', 'x3', 'x4', 'ws1']);
+    // Packing cells: an operator moves between the three cells along the north wall
+    [1140, 1280, 1420].forEach((cx, i) => {
+      node('pt' + i, cx - 45, 46); node('pv' + i, cx - 45, 122); node('pc' + i, cx - 30, 122, { spot: true, face: fR });
+      walk(['pt' + i, 'pv' + i, 'pc' + i], { hidden: true });
+    });
+    walk(['pt0', 'pt1', 'pt2']);
+    // Staging: a worker between the tote rows, crossing Aisle 3 on a crosswalk
+    node('sa', 1072, 667, { spot: true, face: fU }); node('sb', 1150, 667, { spot: true, face: fD }); node('sc', 1232, 667);
+    node('sd', 1328, 667); node('se', 1410, 667, { spot: true, face: fU }); node('sf', 1488, 667, { spot: true, face: fD });
+    walk(['sa', 'sb', 'sc'], { hidden: true }); walk(['sc', 'sd']); walk(['sd', 'se', 'sf'], { hidden: true });
+    // Pallet floor storage: a stock checker along the storage edge
+    [1400, 1480, 1560, 1640, 1728].forEach((x, i) => node('fs' + i, x, 838, { spot: true, face: fD }));
+    walk(['fs0', 'fs1', 'fs2', 'fs3', 'fs4']);
+
+    const spots = (re) => pn.filter((q) => q[3] && q[3].spot && re.test(q[0])).map((q) => q[0]);
+    return addPeds(L, {
+      nodes: pn, edges: pe,
+      walkers: [
+        { id: 'P1', role: 'Picker', vest: '#d8e02a', hat: '#f2f2ee', home: spots(/^(wn|an|ab|as|at)/) },
+        { id: 'P2', role: 'Packer', vest: '#f08a24', hat: '#f2c230', home: spots(/^pc/) },
+        { id: 'P3', role: 'Staging operator', vest: '#d8e02a', hat: '#3b6fd1', home: spots(/^s[a-f]$/) },
+        { id: 'P4', role: 'Stock checker', vest: '#f08a24', hat: '#f2f2ee', home: spots(/^fs/) },
+      ],
+    });
   }
 
   // ======================================================================== geometry helpers
@@ -1077,6 +1199,11 @@ body.is-home { overflow: auto; }
     dockSpeed: 34,
     transferTime: 2.1,
     idleDelay: 0.8,
+    humanR: 11.5,        // person body radius (≈ 0.46 m shoulder width)
+    pedSafe: 40,         // protective field against people (path to person)
+    pedWarn: 58,         // warning field: slow down when a person is this close to the path
+    pedSlow: 50,         // speed cap inside the warning field (≈ 1 m/s)
+    crossClear: 42,      // a crosswalk is clear when no robot is within this distance of it
     unitsPerM: Wd.UNITS_PER_M,
   };
 
@@ -1111,6 +1238,18 @@ body.is-home { overflow: auto; }
       [r.x - c * hl + s * hw, r.y - s * hl - c * hw],
       [r.x - c * hl - s * hw, r.y - s * hl + c * hw],
     ];
+  }
+  function pointSeg(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+    return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  }
+  /** Distance from a point to a robot's rectangular footprint (0 when inside). */
+  function footprintDist(r, px, py) {
+    const c = Math.cos(r.h), s = Math.sin(r.h), dx = px - r.x, dy = py - r.y;
+    const lx = dx * c + dy * s, ly = -dx * s + dy * c;
+    const ex = Math.max(0, Math.abs(lx) - CFG.L / 2), ey = Math.max(0, Math.abs(ly) - CFG.Wr / 2);
+    return Math.hypot(ex, ey);
   }
   function obbOverlap(a, b) {
     const A = footprint(a), B = footprint(b);
@@ -1148,7 +1287,7 @@ body.is-home { overflow: auto; }
       this.fx = { links: [], rings: [], marks: [], ghosts: [], taskLinks: [], edges: [] };
       this.stats = {
         deliveries: 0, collisions: 0, conflicts: 0, yields: 0, reroutes: 0,
-        negotiations: 0, deadlocks: 0, minSep: Infinity, tasksCreated: 0,
+        negotiations: 0, deadlocks: 0, minSep: Infinity, tasksCreated: 0, pedStops: 0, minPedSep: Infinity,
       };
       this.negotiated = Object.create(null);
       this.nextIntent = 0.6;
@@ -1157,6 +1296,7 @@ body.is-home { overflow: auto; }
       this.deadlockCD = 0;
       this.contacts = new Set();
       this.robots = ROBOT_DEFS.map((d, i) => this.makeRobot(d, i));
+      this.humans = ((Wd.peds && Wd.peds.walkers) || []).map((d, i) => this.makeHuman(d, i));
       this.emit('system', ['Session started: 3 robots connected, 16 stations loaded']);
     }
 
@@ -1175,6 +1315,7 @@ body.is-home { overflow: auto; }
         replanCD: 0, lastReroute: -99, rerouteText: '', pendingReplan: null, needRoute: false,
         expectHold: null,
         beacon: 0.4 + i * 0.8,
+        humanStop: -1, humanNear: false,
       };
       this.holdNode(r, st.id);
       return r;
@@ -1226,6 +1367,7 @@ body.is-home { overflow: auto; }
       if (this.t >= this.nextIntent) { this.nextIntent = this.t + 0.3; this.intentCheck(); }
       this.arbitrate();
       this.handleWaits(dt);
+      this.updateHumans(dt);
       for (const r of this.robots) this.move(r, dt);
       for (const r of this.robots) this.progress(r);
       this.checkSafety();
@@ -2041,15 +2183,22 @@ body.is-home { overflow: auto; }
         r.v = 0;
         return;
       }
-      if (r.motion !== 'drive' || !r.route) { r.v = 0; return; }
+      if (r.motion !== 'drive' || !r.route) { r.v = 0; r.humanStop = -1; r.humanNear = false; return; }
       const R = r.route, geo = R.geo;
       let stopS = geo.length;
       const gi = R.idx + R.granted;
       if (gi < R.nodes.length) stopS = Math.min(stopS, R.nodeS[gi] - CFG.stopDist);
+      r.humanNear = false;
       const sf = this.safetyStop(r, stopS);
-      if (sf && sf.s < stopS) { stopS = sf.s; r.follow = sf.q; }
+      let pedStop = -1;
+      if (sf && sf.s < stopS) {
+        stopS = sf.s;
+        if (sf.human != null) pedStop = sf.human; else r.follow = sf.q;
+      }
       const d = stopS - r.s;
       let vLim = Math.min(CFG.vMax, Math.sqrt(2 * CFG.decel * Math.max(0, d)));
+      // Scanner warning field: slow down while a person is close to the path ahead
+      if (r.humanNear) vLim = Math.min(vLim, CFG.pedSlow);
       for (const c of geo.corners) {
         if (c.s1 < r.s) continue;
         if (c.s0 > r.s + 160) break;
@@ -2066,6 +2215,19 @@ body.is-home { overflow: auto; }
       geo.at(r.s, tmp);
       r.x = tmp.x; r.y = tmp.y; r.h = tmp.h;
       if (gi >= R.nodes.length && r.s >= geo.length - 0.05 && r.v < 1) { r.s = geo.length; r.v = 0; r.arrived = true; }
+      // Stopped for a person: log it once per stop
+      const stoppedForPed = pedStop >= 0 && r.v < 3 && stopS - r.s < 2;
+      if (stoppedForPed && r.humanStop < 0) {
+        const h = this.humans[pedStop];
+        const cw = h.path && h.edges[h.k] && h.edges[h.k].cross;
+        this.stats.pedStops++;
+        const ce = R.idx < R.nodes.length ? Wd.edgeBetween(r.prev, R.nodes[R.idx]) : null;
+        this.emit('safety', cw
+          ? [{ r: r.i }, ' stopped for a person on the crosswalk at ', { e: cw }]
+          : [{ r: r.i }, ' stopped: person in its path', ce ? ' on ' : '', ce ? { e: ce.id } : ''],
+          'ped|' + r.i, 15);
+      }
+      r.humanStop = stoppedForPed ? pedStop : -1;
     }
 
     safetyStop(r, limitS) {
@@ -2087,7 +2249,170 @@ body.is-home { overflow: auto; }
           }
         }
       }
+      // People: the obstacle is where the person is and where they are about to walk
+      // (a person on a crosswalk blocks the rest of that crosswalk). People waiting at the
+      // kerb stand outside the lane and are not treated as obstacles.
+      const lookP = Math.max(look, Math.min(limitS, r.s + 130));
+      for (const h of this.humans) {
+        if (h.state === 'wait') continue;
+        const ob = this.humanObstacle(h);
+        const d0 = pointSeg(r.x, r.y, ob.ax, ob.ay, ob.bx, ob.by);
+        if (d0 > lookP - r.s + CFG.pedWarn) continue;
+        for (let k = k0; k < geo.n && geo.cs[k] <= lookP; k++) {
+          const dq = pointSeg(geo.xs[k], geo.ys[k], ob.ax, ob.ay, ob.bx, ob.by);
+          if (dq < CFG.pedWarn) r.humanNear = true;
+          if (geo.cs[k] <= look && dq < CFG.pedSafe && dq < d0 - 0.05) {
+            const s = Math.max(r.s, geo.cs[k - 1]);
+            if (!best || s < best.s) best = { s, q: -1, human: h.i };
+            break;
+          }
+        }
+      }
       return best;
+    }
+
+    humanObstacle(h) {
+      if (h.state !== 'walk' || !h.path) return { ax: h.x, ay: h.y, bx: h.x, by: h.y };
+      const e = h.edges[h.k];
+      const B = Wd.peds.nodes[h.path[h.k + 1]];
+      if (e.cross) return { ax: h.x, ay: h.y, bx: B.x, by: B.y };
+      const dx = B.x - h.x, dy = B.y - h.y, l = Math.hypot(dx, dy) || 1, f = Math.min(1, 16 / l);
+      return { ax: h.x, ay: h.y, bx: h.x + dx * f, by: h.y + dy * f };
+    }
+
+    // ------------------------------------------------------------------ people
+    makeHuman(d, i) {
+      const P = Wd.peds;
+      const start = P.nodes[d.home[Math.floor(this.rand() * d.home.length)]];
+      return {
+        i, id: d.id, role: d.role, vest: d.vest, hat: d.hat, home: d.home,
+        x: start.x, y: start.y, h: start.face != null ? start.face : 0, v: 0,
+        state: 'dwell', timer: 0.5 + this.rand() * 4, node: start.id, faceH: start.face,
+        path: null, edges: null, k: 0, t: 0, phase: this.rand() * 6.28,
+        speed: 54 + this.rand() * 14, waitT: 0, goal: null,
+      };
+    }
+
+    pedPath(from, to) {
+      const P = Wd.peds;
+      const dist = Object.create(null), prev = Object.create(null), done = new Set();
+      dist[from] = 0;
+      for (;;) {
+        let u = null;
+        for (const id in dist) if (!done.has(id) && (u === null || dist[id] < dist[u])) u = id;
+        if (u === null) return null;
+        if (u === to) break;
+        done.add(u);
+        for (const { to: v, e } of P.adj[u]) {
+          const c = dist[u] + e.len + (e.cross ? 40 : 0);
+          if (dist[v] === undefined || c < dist[v]) { dist[v] = c; prev[v] = { u, e }; }
+        }
+      }
+      const nodes = [to], edges = [];
+      for (let v = to; v !== from; v = prev[v].u) { nodes.push(prev[v].u); edges.push(prev[v].e); }
+      return { nodes: nodes.reverse(), edges: edges.reverse() };
+    }
+
+    pickHumanTarget(h) {
+      const choices = h.home.filter((id) => id !== h.node);
+      const goal = choices[Math.floor(this.rand() * choices.length)];
+      const p = goal && this.pedPath(h.node, goal);
+      if (!p || p.nodes.length < 2) { h.timer = 2; return; }
+      h.path = p.nodes; h.edges = p.edges; h.k = 0; h.t = 0; h.goal = goal;
+      h.state = 'walk';
+    }
+
+    /** A person may step onto a crosswalk when no robot is on it and none is about to reach it. */
+    crosswalkClear(A, B) {
+      for (const r of this.robots) {
+        if (pointSeg(r.x, r.y, A.x, A.y, B.x, B.y) < CFG.crossClear) return false;
+        if (!r.route || r.motion !== 'drive' || r.v < 3) continue;
+        const geo = r.route.geo;
+        const look = r.s + (r.v * r.v) / (2 * CFG.decel) + 90;
+        for (let k = geo.index(r.s) + 1; k < geo.n && geo.cs[k] <= look; k += 2) {
+          if (pointSeg(geo.xs[k], geo.ys[k], A.x, A.y, B.x, B.y) < CFG.crossClear) return false;
+        }
+      }
+      return true;
+    }
+
+    humanStatus(h) {
+      if (h.state === 'wait') return 'Waiting at the crosswalk for robot traffic to pass';
+      if (h.state === 'walk') {
+        const e = h.edges[h.k];
+        return e && e.cross && h.t > 0 ? 'Crossing the robot lane on the crosswalk' : 'Walking to the next work spot';
+      }
+      return {
+        'Picker': 'Picking from the rack face', 'Packer': 'Packing at the cell', 'Dock operator': 'Checking staged pallets',
+        'Shipping clerk': 'Checking outbound pallets', 'Staging operator': 'Sorting totes', 'Stock checker': 'Counting pallet stock',
+      }[h.role] || 'Working';
+    }
+
+    turnHuman(h, target, dt) {
+      if (target == null) return;
+      const d = G.angDiff(target, h.h);
+      const step = 7 * dt;
+      h.h += Math.abs(d) <= step ? d : Math.sign(d) * step;
+    }
+
+    updateHumans(dt) {
+      const P = Wd.peds;
+      for (const h of this.humans) {
+        if (h.state === 'dwell') {
+          h.v = 0;
+          this.turnHuman(h, h.faceH, dt);
+          h.timer -= dt;
+          if (h.timer <= 0) this.pickHumanTarget(h);
+          continue;
+        }
+        const A = P.nodes[h.path[h.k]], B = P.nodes[h.path[h.k + 1]];
+        const e = h.edges[h.k];
+        const dir = Math.atan2(B.y - A.y, B.x - A.x);
+        // Wait at the kerb until the crosswalk is clear; once on it, keep going
+        if (e.cross && h.t < 0.01) {
+          if (!this.crosswalkClear(A, B)) {
+            if (h.state !== 'wait') this.stats.pedWaits = (this.stats.pedWaits || 0) + 1;
+            h.state = 'wait';
+            h.v = 0;
+            h.waitT += dt;
+            this.turnHuman(h, dir, dt);
+            continue;
+          }
+          h.waitT = 0;
+        }
+        h.state = 'walk';
+        // Give way to a colleague just ahead (lower id keeps walking, so nobody deadlocks)
+        let give = false;
+        for (const o of this.humans) {
+          if (o.i >= h.i) continue;
+          const dx = o.x - h.x, dy = o.y - h.y;
+          if (dx * dx + dy * dy < 26 * 26 && dx * Math.cos(dir) + dy * Math.sin(dir) > 0) give = true;
+        }
+        let rest = e.len - h.t;
+        for (let k = h.k + 1; k < h.edges.length; k++) rest += h.edges[k].len;
+        const target = give ? 0 : Math.min(h.speed * (e.cross ? 1.15 : 1), 8 + rest * 2.2);
+        h.v += clamp(target - h.v, -180 * dt, 120 * dt);
+        h.t += h.v * dt;
+        h.phase += h.v * dt * 0.34;
+        if (h.t >= e.len) {
+          h.k++;
+          h.t = 0;
+          if (h.k >= h.path.length - 1) {
+            h.node = h.goal;
+            h.x = B.x; h.y = B.y;
+            h.state = 'dwell';
+            h.faceH = B.face != null ? B.face : h.h;
+            h.timer = (h.role === 'Picker' ? 3.5 : h.role === 'Packer' ? 5 : 2.5) + this.rand() * 4;
+            h.path = null;
+            continue;
+          }
+        }
+        const A2 = P.nodes[h.path[h.k]], B2 = P.nodes[h.path[h.k + 1]], e2 = h.edges[h.k];
+        const f = e2.len ? h.t / e2.len : 1;
+        h.x = A2.x + (B2.x - A2.x) * f;
+        h.y = A2.y + (B2.y - A2.y) * f;
+        this.turnHuman(h, Math.atan2(B2.y - A2.y, B2.x - A2.x), dt);
+      }
     }
 
     progress(r) {
@@ -2126,6 +2451,21 @@ body.is-home { overflow: auto; }
               this.contacts.add(key);
               this.stats.collisions++;
               this.emit('alert', ['Collision detected: ', { r: a }, ' and ', { r: b }]);
+            }
+          } else this.contacts.delete(key);
+        }
+        // Robot–person contacts (robot footprint against a 10-unit body radius)
+        for (const h of this.humans) {
+          const r = rs[a];
+          const d = Math.hypot(r.x - h.x, r.y - h.y);
+          if (d < this.stats.minPedSep) this.stats.minPedSep = d;
+          const key = a + '-h' + h.i;
+          if (d < 45 && footprintDist(r, h.x, h.y) < CFG.humanR) {
+            if (!this.contacts.has(key)) {
+              this.contacts.add(key);
+              this.stats.collisions++;
+              this.stats.pedCollisions = (this.stats.pedCollisions || 0) + 1;
+              this.emit('alert', ['Collision detected: ', { r: a }, ' and person ' + h.id]);
             }
           } else this.contacts.delete(key);
         }
@@ -2254,6 +2594,7 @@ body.is-home { overflow: auto; }
       if (r.mode === 'idle') return { key: 'idle', label: 'Idle', tone: 'idle', text: `Parked at ${r.station}, awaiting task` };
       if (r.mode === 'loading') return { key: 'work', label: 'Loading', tone: 'work', text: `Receiving payload at ${r.station}` };
       if (r.mode === 'unloading') return { key: 'work', label: 'Unloading', tone: 'work', text: `Handing off payload at ${r.station}` };
+      if (r.humanStop >= 0) return { key: 'ped', label: 'Stopped', tone: 'wait', text: `Person ${this.humans[r.humanStop].id} crossing ahead, waiting` };
       const b = r.block;
       if (b && b.kind === 'obstruction') return { key: 'replan', label: 'Replanning', tone: 'wait', text: `${Wd.edgeMap[b.edge].name} blocked, computing new route` };
       if (b && b.logged && b.kind === 'node') {
@@ -2270,7 +2611,7 @@ body.is-home { overflow: auto; }
       if (r.motion === 'rotate') return { key: 'turn', label: 'Turning', tone: 'drive', text: 'Rotating in place to route heading' };
       return {
         key: 'move', label: r.mode === 'toPickup' ? 'To pickup' : 'In transit', tone: 'drive',
-        text: 'Via ' + this.viaText(r),
+        text: r.humanNear && r.v > 2 ? 'Slowing: person near path' : 'Via ' + this.viaText(r),
       };
     }
 
@@ -2549,6 +2890,7 @@ body.is-home { overflow: auto; }
       this.drawFloor(ctx);
       this.drawAreas(ctx, false);
       this.drawLanes(ctx);
+      this.drawWalkways(ctx);
       const rng = mulberry32(20240517);
       Wd.racks.forEach((rk) => this.drawRack(ctx, rk, rng));
       this.drawBays(ctx);
@@ -2906,6 +3248,147 @@ body.is-home { overflow: auto; }
       }
     }
 
+    // Painted pedestrian walkways (green), and zebra crosswalks where they cross a robot lane
+    drawWalkways(ctx) {
+      const P = Wd.peds;
+      if (!P) return;
+      const hw = 11;
+      const green = C.light ? '40,145,78' : '63,168,107';
+      for (const e of P.edges) {
+        const A = P.nodes[e.a], B = P.nodes[e.b];
+        const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, nx = -uy, ny = ux;
+        if (e.cross) {
+          // Stripes run with the robot traffic, repeated along the walking direction
+          ctx.fillStyle = C.light ? 'rgba(255,255,255,0.95)' : 'rgba(215,220,226,0.24)';
+          const n = Math.floor(e.len / 10);
+          const off = (e.len - n * 10) / 2 + 2.5;
+          for (let i = 0; i < n; i++) {
+            const cx = A.x + ux * (off + i * 10), cy = A.y + uy * (off + i * 10);
+            ctx.beginPath();
+            ctx.moveTo(cx + nx * 14 - ux * 2.5, cy + ny * 14 - uy * 2.5);
+            ctx.lineTo(cx + nx * 14 + ux * 2.5, cy + ny * 14 + uy * 2.5);
+            ctx.lineTo(cx - nx * 14 + ux * 2.5, cy - ny * 14 + uy * 2.5);
+            ctx.lineTo(cx - nx * 14 - ux * 2.5, cy - ny * 14 - uy * 2.5);
+            ctx.closePath();
+            ctx.fill();
+          }
+          if (C.light) {
+            ctx.strokeStyle = 'rgba(150,158,166,0.6)';
+            ctx.lineWidth = this.px(1);
+            ctx.beginPath();
+            ctx.moveTo(A.x + nx * 15, A.y + ny * 15); ctx.lineTo(B.x + nx * 15, B.y + ny * 15);
+            ctx.moveTo(A.x - nx * 15, A.y - ny * 15); ctx.lineTo(B.x - nx * 15, B.y - ny * 15);
+            ctx.stroke();
+          }
+          continue;
+        }
+        if (!e.vis) continue;
+        ctx.beginPath();
+        ctx.moveTo(A.x + nx * hw, A.y + ny * hw); ctx.lineTo(B.x + nx * hw, B.y + ny * hw);
+        ctx.lineTo(B.x - nx * hw, B.y - ny * hw); ctx.lineTo(A.x - nx * hw, A.y - ny * hw);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(${green},${C.light ? 0.1 : 0.06})`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(${green},${C.light ? 0.75 : 0.42})`;
+        ctx.lineWidth = this.px(1.2);
+        ctx.beginPath();
+        ctx.moveTo(A.x + nx * hw, A.y + ny * hw); ctx.lineTo(B.x + nx * hw, B.y + ny * hw);
+        ctx.moveTo(A.x - nx * hw, A.y - ny * hw); ctx.lineTo(B.x - nx * hw, B.y - ny * hw);
+        ctx.stroke();
+        // Pedestrian pictogram painted on longer walkway sections
+        if (e.len > 150) {
+          const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+          ctx.save();
+          ctx.translate(mx, my);
+          ctx.rotate(Math.atan2(uy, ux));
+          ctx.strokeStyle = `rgba(${green},${C.light ? 0.8 : 0.5})`;
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.lineWidth = 1.6;
+          ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.arc(0, -5.5, 1.8, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(0, -3); ctx.lineTo(0, 2.5); ctx.moveTo(0, 2.5); ctx.lineTo(-2.5, 7); ctx.moveTo(0, 2.5); ctx.lineTo(2.5, 7);
+          ctx.moveTo(-3, -1); ctx.lineTo(3, 0.5);
+          ctx.stroke();
+          ctx.restore();
+          ctx.lineCap = 'butt';
+        }
+      }
+    }
+
+    // A crosswalk in use: outlined while someone is on it or waiting to cross
+    drawCrosswalkUse(ctx) {
+      const P = Wd.peds;
+      if (!P) return;
+      for (const h of this.sim.humans) {
+        if (!h.path) continue;
+        const e = h.edges[h.k];
+        if (!e || !e.cross) continue;
+        const onIt = h.state === 'walk' && h.t > 0;
+        if (!onIt && h.state !== 'wait') continue;
+        const A = P.nodes[e.a], B = P.nodes[e.b];
+        const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, nx = -uy, ny = ux;
+        ctx.beginPath();
+        ctx.moveTo(A.x + nx * 17, A.y + ny * 17); ctx.lineTo(B.x + nx * 17, B.y + ny * 17);
+        ctx.lineTo(B.x - nx * 17, B.y - ny * 17); ctx.lineTo(A.x - nx * 17, A.y - ny * 17);
+        ctx.closePath();
+        ctx.fillStyle = rgba(onIt ? C.warn : C.ok, 0.1);
+        ctx.fill();
+        ctx.strokeStyle = rgba(onIt ? C.warn : C.ok, 0.85);
+        ctx.lineWidth = this.px(1.4);
+        ctx.setLineDash(onIt ? [] : [4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // A person seen from above: hard hat, hi-vis vest with a reflective band, swinging arms and legs
+    drawHuman(ctx, h) {
+      const walking = h.state === 'walk' && h.v > 4;
+      const sw = walking ? Math.sin(h.phase) * 4.2 : 0;
+      if (this.layers.safety) {
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = rgba(C.warn, 0.55);
+        ctx.lineWidth = this.px(1);
+        ctx.beginPath(); ctx.arc(h.x, h.y, this.sim.cfg.pedSafe, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // Thin ring in the vest colour so people are easy to spot at full-map zoom
+      ctx.strokeStyle = rgba(h.vest, C.light ? 0.7 : 0.45);
+      ctx.lineWidth = this.px(1.2);
+      ctx.beginPath(); ctx.arc(h.x, h.y, 17, 0, Math.PI * 2); ctx.stroke();
+      ctx.save();
+      ctx.fillStyle = C.light ? 'rgba(45,52,60,0.26)' : 'rgba(0,0,0,0.5)';
+      ctx.beginPath(); ctx.ellipse(h.x + 2, h.y + 3.2, 8.5, 13.5, h.h, 0, Math.PI * 2); ctx.fill();
+      ctx.translate(h.x, h.y);
+      ctx.rotate(h.h);
+      ctx.scale(1.25, 1.25);
+      const blob = (x, y, rx, ry) => { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); };
+      ctx.fillStyle = '#2b313a';
+      blob(sw, -3.6, 4.2, 2.6);
+      blob(-sw, 3.6, 4.2, 2.6);
+      ctx.fillStyle = '#3a4250';
+      blob(-sw * 0.8, -9.2, 3.8, 2.5);
+      blob(sw * 0.8, 9.2, 3.8, 2.5);
+      ctx.fillStyle = '#d6a888';
+      blob(-sw * 0.8 + 3.2, -9.4, 1.5, 1.5);
+      blob(sw * 0.8 + 3.2, 9.4, 1.5, 1.5);
+      ctx.fillStyle = h.vest;
+      blob(0, 0, 5.4, 9.2);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.ellipse(0, 0, 5.4, 9.2, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(225,230,236,0.85)';
+      ctx.fillRect(-2.2, -8.4, 1.5, 16.8);
+      ctx.fillStyle = h.hat;
+      blob(0.8, 0, 4.7, 4.5);
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.ellipse(0.8, 0, 4.7, 4.5, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      blob(4.6, 0, 1.2, 3.2);
+      ctx.restore();
+    }
+
     drawColumns(ctx) {
       for (const c of COLUMNS) {
         this.shadow(ctx, true, 4, 1.5, 2.5);
@@ -3120,6 +3603,8 @@ body.is-home { overflow: auto; }
       this.drawConflicts(ctx);
       this.drawHover(ctx);
       if (L.safety) this.drawSafety(ctx);
+      this.drawCrosswalkUse(ctx);
+      for (const h of this.sim.humans) this.drawHuman(ctx, h);
       for (const r of this.sim.robots) this.drawRobot(ctx, r);
       for (const r of this.sim.robots) this.drawTransfer(ctx, r);
       this.drawSelection(ctx);
@@ -3517,6 +4002,8 @@ body.is-home { overflow: auto; }
     // ------------------------------------------------------------------ screen-space annotations
     tag(ctx, x, y, parts, opt) {
       opt = opt || {};
+      // Labels belong to something on the map: skip them when that thing is out of view
+      if (x < -80 || x > this.cw + 80 || y < -30 || y > this.ch + 30) return null;
       const size = opt.size || this.fs(11);
       const padX = opt.padX == null ? 5 : opt.padX;
       const h = Math.round(size + (opt.padY == null ? 7 : opt.padY));
@@ -3707,6 +4194,7 @@ body.is-home { overflow: auto; }
     pick(px, py) {
       const p = this.toWorld(px, py);
       for (const r of this.sim.robots) if (Math.hypot(r.x - p.x, r.y - p.y) < 32) return { robot: r.i };
+      for (const h of this.sim.humans) if (Math.hypot(h.x - p.x, h.y - p.y) < 16) return { human: h.i };
       for (const st of Wd.stations) {
         if (Math.abs(st.x - p.x) < 32 && Math.abs(st.y - p.y) < 32) return { station: st.id };
         if (Math.abs(st.stand.x - p.x) < 18 && Math.abs(st.stand.y - p.y) < 28) return { station: st.id };
@@ -3758,7 +4246,7 @@ body.is-home { overflow: auto; }
   const LEVEL = {
     system: 'info', task: 'info', claim: 'info', pickup: 'info', deliver: 'info',
     negotiate: 'notice', reroute: 'notice', resolve: 'notice', clear: 'notice',
-    conflict: 'warn', deadlock: 'warn', block: 'warn', alert: 'alarm',
+    conflict: 'warn', deadlock: 'warn', block: 'warn', safety: 'warn', alert: 'alarm',
   };
   const TASK_TYPES = { system: 1, task: 1, claim: 1, pickup: 1, deliver: 1 };
   const HINT = {
@@ -4168,6 +4656,7 @@ body.is-home { overflow: auto; }
         this.hoverAt(p);
         return;
       }
+      if (hit && hit.human != null) return;
       if (hit && hit.robot != null) this.select(this.rd.selected === hit.robot ? -1 : hit.robot);
       else if (hit && hit.station) {
         const docked = this.sim.robots.find((r) => r.station === hit.station);
@@ -4180,7 +4669,7 @@ body.is-home { overflow: auto; }
     hoverAt(p) {
       let hit = this.rd.pick(p.x, p.y);
       if (this.rd.tool === 'block' && hit && !hit.edge) hit = null;
-      this.rd.hover = hit && hit.robot == null ? hit : null;
+      this.rd.hover = hit && hit.robot == null && hit.human == null ? hit : null;
       const tip = this.el.tip;
       if (!hit) { tip.hidden = true; this.el.canvas.style.cursor = ''; return; }
       this.el.canvas.style.cursor = this.rd.tool === 'select' && (hit.robot != null || hit.station) ? 'pointer' : '';
@@ -4196,6 +4685,10 @@ body.is-home { overflow: auto; }
 
     tipHTML(hit) {
       const sim = this.sim;
+      if (hit.human != null) {
+        const h = sim.humans[hit.human];
+        return `<b>${h.id}</b> · ${esc(h.role)}<span class="k">${esc(sim.humanStatus(h))}</span><span class="a">Robots slow down near people and stop for them on crosswalks</span>`;
+      }
       if (hit.robot != null) {
         const r = sim.robots[hit.robot], st = sim.status(r);
         return `<b>${r.id}</b> · ${esc(st.label)}<span class="k">${esc(st.text)}</span><span class="a">Click to inspect</span>`;
@@ -4373,7 +4866,7 @@ body.is-home { overflow: auto; }
           <p class="inst-sum">${esc(L.summary)}</p>
           <dl class="inst-meta">
             <div><dt>Floor</dt><dd>${L.floorM[0].toFixed(1)} × ${L.floorM[1].toFixed(1)} m</dd></div>
-            <div><dt>Robots</dt><dd>${L.robots.length}</dd></div>
+            <div><dt>Robots · people</dt><dd>${L.robots.length} · ${L.peds ? L.peds.walkers.length : 0}</dd></div>
             <div><dt>Stations</dt><dd>${L.stations.length}</dd></div>
             <div><dt>Nodes · path segments</dt><dd>${nodes} · ${segs}</dd></div>
           </dl>

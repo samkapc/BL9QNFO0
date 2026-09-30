@@ -61,6 +61,43 @@
     return L;
   }
 
+  // ---- Pedestrians ---------------------------------------------------------------------------
+  // People walk on their own network: painted walkways, work spots, and zebra crosswalks where a
+  // walkway crosses a robot lane (detected automatically from the lane geometry).
+  function pointSegDist(px, py, A, B) {
+    const dx = B.x - A.x, dy = B.y - A.y, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - A.x) * dx + (py - A.y) * dy) / l2)) : 0;
+    return Math.hypot(px - (A.x + dx * t), py - (A.y + dy * t));
+  }
+  function addPeds(L, spec) {
+    const P = { nodes: Object.create(null), list: [], edges: [], adj: Object.create(null), walkers: spec.walkers };
+    for (const [id, x, y, opt] of spec.nodes) {
+      const n = { id, x, y, spot: !!(opt && opt.spot), face: opt && opt.face != null ? opt.face : null };
+      P.nodes[id] = n;
+      P.list.push(n);
+      P.adj[id] = [];
+    }
+    for (const [a, b, opt] of spec.edges) {
+      const A = P.nodes[a], B = P.nodes[b];
+      const e = { a, b, len: Math.hypot(B.x - A.x, B.y - A.y), vis: !(opt && opt.hidden), cross: null };
+      const steps = Math.ceil(e.len / 4);
+      for (const re of L.edges) {
+        const half = re.kind === 'spur' ? 32 : HALF;
+        const RA = L.nodeMap[re.a], RB = L.nodeMap[re.b];
+        for (let k = 0; k <= steps && !e.cross; k++) {
+          const f = k / steps;
+          if (pointSegDist(A.x + (B.x - A.x) * f, A.y + (B.y - A.y) * f, RA, RB) < half - 2) e.cross = re.id;
+        }
+        if (e.cross) break;
+      }
+      P.edges.push(e);
+      P.adj[a].push({ to: b, e });
+      P.adj[b].push({ to: a, e });
+    }
+    L.peds = P;
+    return L;
+  }
+
   // ======================================================================== Instance 1 · Bay 01
   // A regular cross-aisle grid: four storage aisles, three cross-aisles, pick-face bays cut into
   // the racking, and dock doors on the north and south walls.
@@ -129,7 +166,44 @@
     ROWS.forEach((y, i) => [430, 1150].forEach((x) => L.labels.push({ text: 'Cross-aisle ' + ROW_IDS[i], x, y: y - 22 })));
     for (let k = 0; k <= 8; k++) L.grid.xs.push(L.WALL.x0 + k * 192.5);
     for (let k = 0; k <= 5; k++) L.grid.ys.push(L.WALL.y0 + k * 188);
-    return finalize(L);
+    finalize(L);
+
+    // Pedestrians: a walkway along each dock apron (crossing the dock lanes on zebra crosswalks),
+    // with work spots in the gaps between the staged pallets.
+    const peds = { nodes: [], edges: [], walkers: [] };
+    const north = [], south = [];
+    [[156, 'n', -1], [844, 's', 1]].forEach(([y, pre, side]) => {
+      const stops = [{ x: 60 }, { x: 1540 }];
+      COLS.forEach((x) => stops.push({ x: x - 44 }, { x: x + 44 }));
+      L.areas.filter((a) => a.kind === 'staging' && (side < 0 ? a.y1 < 500 : a.y0 > 500)).forEach((a) => {
+        const w = a.x1 - a.x0, cols = Math.max(1, Math.floor((w - 16) / 58)), gx = (w - cols * 48) / (cols + 1);
+        if (gx < 20) return;
+        for (let c = 0; c < cols - 1; c++) stops.push({ x: a.x0 + gx + c * (48 + gx) + 48 + gx / 2, gap: true });
+      });
+      stops.sort((p, q) => p.x - q.x);
+      stops.forEach((s, i) => {
+        const id = pre + i;
+        peds.nodes.push([id, s.x, y, { spot: i === 0 || i === stops.length - 1, face: side * Math.PI / 2 }]);
+        if (i) peds.edges.push([pre + (i - 1), id]);
+        (side < 0 ? north : south).push(id);
+        if (s.gap) {
+          const gid = pre + 'g' + i;
+          peds.nodes.push([gid, s.x, y + side * 38, { spot: true, face: side * Math.PI / 2 }]);
+          peds.edges.push([id, gid, { hidden: true }]);
+          (side < 0 ? north : south).push(gid);
+        }
+      });
+    });
+    const spotsOf = (ids, test) => ids.filter((id) => {
+      const n = peds.nodes.find((q) => q[0] === id);
+      return n[3].spot && test(n[1]);
+    });
+    peds.walkers = [
+      { id: 'P1', role: 'Dock operator', vest: '#d8e02a', hat: '#f2f2ee', home: spotsOf(north, (x) => x < 800) },
+      { id: 'P2', role: 'Dock operator', vest: '#f08a24', hat: '#f2c230', home: spotsOf(north, (x) => x > 800) },
+      { id: 'P3', role: 'Shipping clerk', vest: '#d8e02a', hat: '#3b6fd1', home: spotsOf(south, () => true) },
+    ];
+    return addPeds(L, peds);
   }
 
   // ======================================================================== Instance 2 · Bay 02
@@ -211,7 +285,7 @@
     for (let bank = 0; bank < 2; bank++) {
       for (let i = 0; i < 7; i++) {
         const x0 = 130 + 76 * i;
-        L.racks.push({ x0, x1: x0 + 52, y0: bank ? 705 : 140, y1: bank ? 1000 : 415, faces: ['left', 'right'], pitch: 27 });
+        L.racks.push({ x0, x1: x0 + 52, y0: bank ? 725 : 140, y1: bank ? 1000 : 415, faces: ['left', 'right'], pitch: 27 });
       }
     }
     L.racks.forEach((rk, i) => { rk.id = 'R' + pad2(i + 1); });
@@ -238,7 +312,55 @@
     L.labels.push({ text: 'Dock doors', x: 1742, y: 450, rot: -90, size: 10.5, weight: 500 });
     for (let k = 0; k <= 9; k++) L.grid.xs.push(L.WALL.x0 + (k * (L.WALL.x1 - L.WALL.x0)) / 9);
     for (let k = 0; k <= 6; k++) L.grid.ys.push(L.WALL.y0 + (k * (L.WALL.y1 - L.WALL.y0)) / 6);
-    return finalize(L);
+    finalize(L);
+
+    // Pedestrians
+    const pn = [], pe = [];
+    const node = (id, x, y, opt) => pn.push([id, x, y, opt]);
+    const walk = (ids, opt) => { for (let i = 1; i < ids.length; i++) pe.push([ids[i - 1], ids[i], opt]); };
+    const fL = Math.PI, fR = 0, fU = -Math.PI / 2, fD = Math.PI / 2;
+    // Racking: walkways along the top of the upper bank and the top of the lower bank, the narrow
+    // pick aisles between racks (too narrow for the AMRs), and one zebra crosswalk over the main aisle.
+    const AX = [194, 270, 346, 422, 498, 574];
+    const WX = [120].concat(AX, [650]);
+    WX.forEach((x, i) => { node('wn' + i, x, 125, i === 0 || i === WX.length - 1 ? { spot: true, face: fD } : null); node('ws' + i, x, 711); });
+    walk(WX.map((_, i) => 'wn' + i));
+    walk(WX.map((_, i) => 'ws' + i));
+    AX.forEach((x, i) => {
+      const k = i + 1, pd = x === 270 || x === 422 || x === 574;
+      node('an' + k, x, 262, { spot: true, face: i % 2 ? fL : fR });
+      node('ab' + k, x, 398, { spot: true, face: pd ? fD : i % 2 ? fR : fL });
+      node('as' + k, x, 850, { spot: true, face: i % 2 ? fR : fL });
+      node('at' + k, x, 985, { spot: true, face: i % 2 ? fL : fR });
+      walk(['wn' + k, 'an' + k, 'ab' + k], { hidden: true });
+      walk(['ws' + k, 'as' + k, 'at' + k], { hidden: true });
+    });
+    node('x1', 194, 440); node('x2', 172, 478); node('xn', 172, 512); node('xs', 172, 608); node('x3', 172, 650); node('x4', 194, 690);
+    walk(['ab1', 'x1', 'x2', 'xn', 'xs', 'x3', 'x4', 'ws1']);
+    // Packing cells: an operator moves between the three cells along the north wall
+    [1140, 1280, 1420].forEach((cx, i) => {
+      node('pt' + i, cx - 45, 46); node('pv' + i, cx - 45, 122); node('pc' + i, cx - 30, 122, { spot: true, face: fR });
+      walk(['pt' + i, 'pv' + i, 'pc' + i], { hidden: true });
+    });
+    walk(['pt0', 'pt1', 'pt2']);
+    // Staging: a worker between the tote rows, crossing Aisle 3 on a crosswalk
+    node('sa', 1072, 667, { spot: true, face: fU }); node('sb', 1150, 667, { spot: true, face: fD }); node('sc', 1232, 667);
+    node('sd', 1328, 667); node('se', 1410, 667, { spot: true, face: fU }); node('sf', 1488, 667, { spot: true, face: fD });
+    walk(['sa', 'sb', 'sc'], { hidden: true }); walk(['sc', 'sd']); walk(['sd', 'se', 'sf'], { hidden: true });
+    // Pallet floor storage: a stock checker along the storage edge
+    [1400, 1480, 1560, 1640, 1728].forEach((x, i) => node('fs' + i, x, 838, { spot: true, face: fD }));
+    walk(['fs0', 'fs1', 'fs2', 'fs3', 'fs4']);
+
+    const spots = (re) => pn.filter((q) => q[3] && q[3].spot && re.test(q[0])).map((q) => q[0]);
+    return addPeds(L, {
+      nodes: pn, edges: pe,
+      walkers: [
+        { id: 'P1', role: 'Picker', vest: '#d8e02a', hat: '#f2f2ee', home: spots(/^(wn|an|ab|as|at)/) },
+        { id: 'P2', role: 'Packer', vest: '#f08a24', hat: '#f2c230', home: spots(/^pc/) },
+        { id: 'P3', role: 'Staging operator', vest: '#d8e02a', hat: '#3b6fd1', home: spots(/^s[a-f]$/) },
+        { id: 'P4', role: 'Stock checker', vest: '#f08a24', hat: '#f2f2ee', home: spots(/^fs/) },
+      ],
+    });
   }
 
   // ======================================================================== geometry helpers

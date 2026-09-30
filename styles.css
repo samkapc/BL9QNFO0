@@ -219,7 +219,7 @@ body.is-home { overflow: auto; }
   min-height: 28px; padding: 4px 10px; border-top: 1px solid var(--line); background: var(--chrome);
   color: var(--text-2); font-size: 12px; white-space: nowrap;
 }
-.statusline .hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); }
+.statusline .hint { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); }
 .legend { display: inline-flex; gap: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .sw { width: 8px; height: 8px; border-radius: 1px; }

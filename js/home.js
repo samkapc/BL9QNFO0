@@ -125,7 +125,7 @@
           <p class="inst-sum">${esc(L.summary)}</p>
           <dl class="inst-meta">
             <div><dt>Floor</dt><dd>${L.floorM[0].toFixed(1)} × ${L.floorM[1].toFixed(1)} m</dd></div>
-            <div><dt>Robots</dt><dd>${L.robots.length}</dd></div>
+            <div><dt>Robots · people</dt><dd>${L.robots.length} · ${L.peds ? L.peds.walkers.length : 0}</dd></div>
             <div><dt>Stations</dt><dd>${L.stations.length}</dd></div>
             <div><dt>Nodes · path segments</dt><dd>${nodes} · ${segs}</dd></div>
           </dl>

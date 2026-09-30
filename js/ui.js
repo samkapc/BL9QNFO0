@@ -19,7 +19,7 @@
   const LEVEL = {
     system: 'info', task: 'info', claim: 'info', pickup: 'info', deliver: 'info',
     negotiate: 'notice', reroute: 'notice', resolve: 'notice', clear: 'notice',
-    conflict: 'warn', deadlock: 'warn', block: 'warn', alert: 'alarm',
+    conflict: 'warn', deadlock: 'warn', block: 'warn', safety: 'warn', alert: 'alarm',
   };
   const TASK_TYPES = { system: 1, task: 1, claim: 1, pickup: 1, deliver: 1 };
   const HINT = {
@@ -429,6 +429,7 @@
         this.hoverAt(p);
         return;
       }
+      if (hit && hit.human != null) return;
       if (hit && hit.robot != null) this.select(this.rd.selected === hit.robot ? -1 : hit.robot);
       else if (hit && hit.station) {
         const docked = this.sim.robots.find((r) => r.station === hit.station);
@@ -441,7 +442,7 @@
     hoverAt(p) {
       let hit = this.rd.pick(p.x, p.y);
       if (this.rd.tool === 'block' && hit && !hit.edge) hit = null;
-      this.rd.hover = hit && hit.robot == null ? hit : null;
+      this.rd.hover = hit && hit.robot == null && hit.human == null ? hit : null;
       const tip = this.el.tip;
       if (!hit) { tip.hidden = true; this.el.canvas.style.cursor = ''; return; }
       this.el.canvas.style.cursor = this.rd.tool === 'select' && (hit.robot != null || hit.station) ? 'pointer' : '';
@@ -457,6 +458,10 @@
 
     tipHTML(hit) {
       const sim = this.sim;
+      if (hit.human != null) {
+        const h = sim.humans[hit.human];
+        return `<b>${h.id}</b> · ${esc(h.role)}<span class="k">${esc(sim.humanStatus(h))}</span><span class="a">Robots slow down near people and stop for them on crosswalks</span>`;
+      }
       if (hit.robot != null) {
         const r = sim.robots[hit.robot], st = sim.status(r);
         return `<b>${r.id}</b> · ${esc(st.label)}<span class="k">${esc(st.text)}</span><span class="a">Click to inspect</span>`;

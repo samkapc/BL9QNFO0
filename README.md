@@ -36,6 +36,22 @@ open floor.
 Each layout is plain data in `js/world.js` (path network, stations, racks, areas, doors, labels,
 robot start positions and task flows), so the same simulation and console run both.
 
+## People on the floor
+
+A few workers walk the floor in each instance: dock operators and a shipping clerk on the dock
+aprons in Bay 01; a picker in the narrow pick aisles, a packer at the packing cells, a staging
+operator and a stock checker in Bay 02. They walk on painted green walkways between work spots,
+pause there to work, and cross robot lanes only on zebra crosswalks.
+
+- A person waits at the kerb while a robot is on the crosswalk or about to reach it, and never
+  stops once crossing.
+- Robots slow down (≈1 m/s) when a person is near their path, and stop before a crosswalk someone
+  is on, treating the rest of that crosswalk as occupied. The log records each stop.
+- Robot–person contacts count as collisions; the stress test verifies there are none.
+
+Hover a person to see their role and what they are doing. The scanner safety field layer also
+shows the protective radius around each person.
+
 ## What you are looking at
 
 The map is drawn as a facility plan: building column grid, racks with their slots, storage and
@@ -53,6 +69,8 @@ conveyors.
 | Amber zone and bar | Conflict at a node and the hold line where the robot waits |
 | Grey dashed trail | A route the robot abandoned when it re-planned |
 | Red hatched segment | Blocked path segment, with its countdown |
+| Green walkway, zebra crossing | Pedestrian walkway and crosswalk; the crosswalk is outlined while someone uses it |
+| Figure with a coloured ring | A worker (hard hat and hi-vis vest seen from above) |
 
 ## Controls
 
