@@ -62,8 +62,13 @@ conveyors.
   Blocks that would trap a robot or cut off a station are refused.
 - **Random obstruction** blocks a segment on a route that is in use, so rerouting is easy to show.
 - **Layers** toggles paths, reservations, V2V messages, scanner safety fields and labels.
+- **Floor plan style** (moon and sun buttons in the map toolbar, or `L`) switches the warehouse map
+  between the dark style and a light, daylight style: pale concrete, white walls, white cartons
+  on wooden pallets, dock leveller plates and soft shadows. Only the map changes; the console
+  around it stays dark. The choice is remembered in the browser and also applies to the
+  previews on the Instances page.
 - Keys: `Space` pause · `1–4` speed (0.5×, 1×, 2×, 4×) · `V` select · `B` block · `O` random
-  obstruction · `+`/`−` zoom · `0` fit · `F` full screen · `Esc` clear selection.
+  obstruction · `+`/`−` zoom · `0` fit · `L` floor plan style · `F` full screen · `Esc` clear selection.
 
 ## How the coordination works
 

@@ -154,8 +154,8 @@ body.is-home { overflow: auto; }
 .btn svg { width: 16px; height: 16px; flex: none; color: var(--text-2); }
 .btn:hover svg { color: var(--text); }
 .btn .chev { width: 14px; height: 14px; margin-left: -2px; }
-.btn.tool.on, .btn[aria-expanded="true"] { background: var(--accent-soft); border-color: #3d6cb3; color: #d6e5ff; }
-.btn.tool.on svg { color: #9cc2ff; }
+.btn.tool.on, .btn.theme.on, .btn[aria-expanded="true"] { background: var(--accent-soft); border-color: #3d6cb3; color: #d6e5ff; }
+.btn.tool.on svg, .btn.theme.on svg { color: #9cc2ff; }
 .group { display: inline-flex; }
 .group .btn { border-radius: 0; margin-left: -1px; }
 .group .btn:first-child { border-radius: 3px 0 0 3px; margin-left: 0; }
@@ -209,6 +209,7 @@ body.is-home { overflow: auto; }
 .k-lbl { font: 500 9px/10px var(--mono); color: var(--text-2); font-style: normal; text-align: center; }
 
 .canvas-wrap { position: relative; flex: 1; min-height: 0; background: #141619; }
+.canvas-wrap.light { background: #d9dde1; }
 .canvas-wrap canvas { position: absolute; inset: 0; display: block; touch-action: none; }
 .canvas-wrap.tool-block canvas { cursor: crosshair; }
 .canvas-wrap.panning canvas { cursor: grabbing; }
@@ -218,7 +219,7 @@ body.is-home { overflow: auto; }
   min-height: 28px; padding: 4px 10px; border-top: 1px solid var(--line); background: var(--chrome);
   color: var(--text-2); font-size: 12px; white-space: nowrap;
 }
-.statusline .hint { color: var(--text-3); white-space: normal; }
+.statusline .hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); }
 .legend { display: inline-flex; gap: 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .sw { width: 8px; height: 8px; border-radius: 1px; }

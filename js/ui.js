@@ -59,6 +59,20 @@
       this.bindMap();
       this.bindKeys();
       this.updateViewInfo();
+      this.setMapTheme(this.rd.theme, true);
+    }
+
+    // Floor plan style: only the map switches, the console around it stays dark
+    setMapTheme(theme, initial) {
+      if (!initial) this.rd.setTheme(theme);
+      const t = this.rd.theme;
+      document.querySelectorAll('.btn.theme').forEach((b) => {
+        const on = b.dataset.theme === t;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      this.el.wrap.classList.toggle('light', t === 'light');
+      if (!initial) { try { root.localStorage.setItem('edgefleet.mapTheme', t); } catch (e) { /* storage unavailable */ } }
     }
 
     clock(t) {
@@ -313,6 +327,7 @@
       document.getElementById('btnFull').addEventListener('click', () => this.toggleFull());
       document.getElementById('btnObstacle').addEventListener('click', () => this.dropObstruction());
       document.querySelectorAll('.btn.tool').forEach((b) => b.addEventListener('click', () => this.setTool(b.dataset.tool)));
+      document.querySelectorAll('.btn.theme').forEach((b) => b.addEventListener('click', () => this.setMapTheme(b.dataset.theme)));
       document.getElementById('zoomIn').addEventListener('click', () => { this.rd.zoomBy(1.4); this.updateViewInfo(); });
       document.getElementById('zoomOut').addEventListener('click', () => { this.rd.zoomBy(1 / 1.4); this.updateViewInfo(); });
       document.getElementById('zoomFit').addEventListener('click', () => { this.rd.fit(); this.updateViewInfo(); });
@@ -342,6 +357,7 @@
         else if (k === '-' || k === '_') { this.rd.zoomBy(1 / 1.4); this.updateViewInfo(); }
         else if (k === '0') { this.rd.fit(); this.updateViewInfo(); }
         else if (k === 'f') this.toggleFull();
+        else if (k === 'l') this.setMapTheme(this.rd.theme === 'light' ? 'dark' : 'light');
         else if (k === 'escape') { this.toggleMenu(false); this.select(-1); }
       });
     }

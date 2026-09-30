@@ -8,8 +8,17 @@
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  // Preview colours for the two floor plan styles (the console itself is always dark)
+  const PREVIEW = {
+    dark: { bg: '#141619', floor: '#1b1e22', lane: '#262a2f', rack: '#2d3238', rackEdge: null, bay: '#262a2f', conveyor: '#4b525a',
+      cube: '#2d3238', cell: '#24282d', area: '#212529', areaEdge: '#363b42', net: '#3d444c', station: '#6a737d', wall: '#4b525a', robot: '#4a5058' },
+    light: { bg: '#d9dde1', floor: '#e7e9eb', lane: '#dcdfe2', rack: '#fbfbfc', rackEdge: '#d2bf98', bay: '#dcdfe2', conveyor: '#9aa3ab',
+      cube: '#cfd4d8', cell: '#f1f2f3', area: '#eceef0', areaEdge: '#b6bcc2', net: '#c3c9ce', station: '#8f979f', wall: '#f6f7f8', wallEdge: '#a9b0b7', robot: '#474d55' },
+  };
+
   /** Simplified floor plan of a layout, fitted into its canvas. */
   function drawPreview(canvas, L) {
+    const P = PREVIEW[(WH.savedMapTheme && WH.savedMapTheme()) || 'dark'];
     const box = canvas.parentElement.getBoundingClientRect();
     if (!box.width || !box.height) return;
     const dpr = Math.min(2, root.devicePixelRatio || 1);
@@ -21,14 +30,14 @@
     const ox = (box.width - (W.x1 - W.x0) * s) / 2 - W.x0 * s;
     const oy = (box.height - (W.y1 - W.y0) * s) / 2 - W.y0 * s;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#141619';
+    ctx.fillStyle = P.bg;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
     const px = 1 / s;
-    ctx.fillStyle = '#1b1e22';
+    ctx.fillStyle = P.floor;
     ctx.fillRect(W.x0, W.y0, W.x1 - W.x0, W.y1 - W.y0);
     // Lanes
-    ctx.strokeStyle = '#262a2f';
+    ctx.strokeStyle = P.lane;
     ctx.lineCap = 'square';
     for (const e of L.edges) {
       const A = L.nodeMap[e.a], B = L.nodeMap[e.b];
@@ -37,13 +46,14 @@
     }
     // Racks and areas
     for (const rk of L.racks) {
-      ctx.fillStyle = '#2d3238';
+      ctx.fillStyle = P.rack;
       ctx.fillRect(rk.x0, rk.y0, rk.x1 - rk.x0, rk.y1 - rk.y0);
+      if (P.rackEdge) { ctx.strokeStyle = P.rackEdge; ctx.lineWidth = 1.2 * px; ctx.strokeRect(rk.x0, rk.y0, rk.x1 - rk.x0, rk.y1 - rk.y0); }
     }
-    for (const b of L.bays) { ctx.fillStyle = '#262a2f'; ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
+    for (const b of L.bays) { ctx.fillStyle = P.bay; ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
     for (const a of L.areas) {
       if (a.kind === 'conveyor') {
-        ctx.strokeStyle = '#4b525a';
+        ctx.strokeStyle = P.conveyor;
         ctx.lineWidth = 14;
         ctx.lineCap = 'butt';
         ctx.beginPath();
@@ -52,14 +62,14 @@
         continue;
       }
       const w = a.x1 - a.x0, h = a.y1 - a.y0;
-      ctx.fillStyle = a.kind === 'cube' ? '#2d3238' : a.kind === 'cell' ? '#24282d' : '#212529';
+      ctx.fillStyle = a.kind === 'cube' ? P.cube : a.kind === 'cell' ? P.cell : P.area;
       ctx.fillRect(a.x0, a.y0, w, h);
-      ctx.strokeStyle = '#363b42';
+      ctx.strokeStyle = P.areaEdge;
       ctx.lineWidth = px;
       ctx.strokeRect(a.x0, a.y0, w, h);
     }
     // Path network
-    ctx.strokeStyle = '#3d444c';
+    ctx.strokeStyle = P.net;
     ctx.lineWidth = px;
     for (const e of L.edges) {
       const A = L.nodeMap[e.a], B = L.nodeMap[e.b];
@@ -67,15 +77,21 @@
     }
     // Stations
     for (const st of L.stations) {
-      ctx.strokeStyle = '#6a737d';
+      ctx.strokeStyle = P.station;
       ctx.lineWidth = 1.2 * px;
       ctx.strokeRect(st.x - 28, st.y - 28, 56, 56);
     }
     // Walls and doors
-    ctx.strokeStyle = '#4b525a';
+    ctx.strokeStyle = P.wall;
     ctx.lineWidth = 8;
     ctx.strokeRect(W.x0 - 4, W.y0 - 4, W.x1 - W.x0 + 8, W.y1 - W.y0 + 8);
-    ctx.fillStyle = '#141619';
+    if (P.wallEdge) {
+      ctx.strokeStyle = P.wallEdge;
+      ctx.lineWidth = px;
+      ctx.strokeRect(W.x0, W.y0, W.x1 - W.x0, W.y1 - W.y0);
+      ctx.strokeRect(W.x0 - 8, W.y0 - 8, W.x1 - W.x0 + 16, W.y1 - W.y0 + 16);
+    }
+    ctx.fillStyle = P.bg;
     for (const d of L.doors) {
       if (d.side === 'top') ctx.fillRect(d.pos - d.w / 2, W.y0 - 9, d.w, 10);
       else if (d.side === 'bottom') ctx.fillRect(d.pos - d.w / 2, W.y1 - 1, d.w, 10);
@@ -88,7 +104,7 @@
       ctx.save();
       ctx.translate(st.x, st.y);
       ctx.rotate(Math.atan2(st.dir.y, st.dir.x));
-      ctx.fillStyle = '#4a5058';
+      ctx.fillStyle = P.robot;
       ctx.fillRect(-24, -17, 48, 34);
       ctx.fillStyle = r.color;
       ctx.fillRect(-24, -17, 7, 34);

@@ -8,6 +8,11 @@
   // Each instance runs its own layout and fleet, so moving between views reloads the page.
   root.addEventListener('hashchange', () => root.location.reload());
 
+  // The floor plan style (dark or light) is remembered per viewer; the console itself is always dark.
+  WH.savedMapTheme = () => {
+    try { return root.localStorage.getItem('edgefleet.mapTheme') === 'light' ? 'light' : 'dark'; } catch (e) { return 'dark'; }
+  };
+
   const home = document.getElementById('home');
   const appEl = document.getElementById('app');
   if (WH.route.view === 'home') {
@@ -29,7 +34,7 @@
 
   const sim = new WH.Sim({});
   const canvas = document.getElementById('map');
-  const renderer = new WH.Renderer(canvas, sim);
+  const renderer = new WH.Renderer(canvas, sim, { theme: WH.savedMapTheme() });
   const ui = new WH.UI(sim, renderer);
   WH.app = { sim, renderer, ui };
 
