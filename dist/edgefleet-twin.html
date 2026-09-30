@@ -1,0 +1,4230 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>EdgeFleet Warehouse Twin</title>
+  <meta name="description"
+    content="Fleet console for three autonomous mobile robots moving payloads between 16 warehouse stations with decentralized, collision-free coordination.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <style>
+/* Layout: operator console. App bar across the top; a map workspace (toolbar, canvas, status
+   line) takes most of the screen, with a fixed-width inspector on the right that stacks below
+   on narrow screens. Colour is reserved for state: green driving, amber waiting, blue loading,
+   red blocked. */
+:root {
+  color-scheme: dark;
+  --bg: #111315;
+  --chrome: #16181b;
+  --panel: #191c1f;
+  --panel-2: #1e2125;
+  --hover: #23272b;
+  --line: #2a2e33;
+  --line-2: #373c42;
+  --text: #e1e4e8;
+  --text-2: #a0a7b0;
+  --text-3: #6f7781;
+  --accent: #4a8ff0;
+  --accent-soft: rgba(74, 143, 240, 0.14);
+  --ok: #3ea86b;
+  --warn: #e3a42b;
+  --alarm: #e5534b;
+  --info: #5b9cf5;
+  --idle: #8a919b;
+  --payload: #b08a55;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 13px/1.4 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+svg { display: block; }
+[hidden] { display: none !important; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.spacer { flex: 1; }
+
+.app { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+
+/* ------------------------------------------------------------------ app bar */
+.topbar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  min-height: 46px; padding-block: 6px; padding-inline: 16px;
+  background: var(--chrome); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 9px; }
+.logo { width: 20px; height: 20px; }
+.product { font-weight: 600; font-size: 14px; letter-spacing: 0.01em; }
+.crumbs { display: flex; align-items: center; gap: 7px; color: var(--text-2); padding-left: 14px; border-left: 1px solid var(--line); }
+.crumbs .sep { color: var(--text-3); }
+.crumbs .cur { color: var(--text); }
+.mode {
+  padding: 1px 6px; border: 1px solid #5a4a24; border-radius: 3px;
+  background: rgba(227, 164, 43, 0.1); color: #e8bb5c;
+  font: 500 11px/16px var(--font); letter-spacing: 0.02em;
+}
+.status-items { display: flex; align-items: center; gap: 16px; color: var(--text-2); white-space: nowrap; }
+.si { display: inline-flex; align-items: center; gap: 6px; }
+.si b { color: var(--text); font-weight: 500; }
+.led { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); }
+.led.ok { background: var(--ok); }
+.playback { display: flex; align-items: center; gap: 6px; }
+a.brand { color: inherit; text-decoration: none; border-radius: 3px; }
+a.brand:hover .product { color: #fff; }
+.crumbs a { color: var(--text-2); text-decoration: none; }
+.crumbs a:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.inst-tag {
+  margin-left: 4px; padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 3px;
+  font: 500 11px/16px var(--mono); color: var(--text-2);
+}
+a.brand:focus-visible, .crumbs a:focus-visible, .inst:focus-visible, .inst-new:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ instances overview */
+body.is-home { overflow: auto; }
+.home { min-height: 100%; display: flex; flex-direction: column; }
+.home-main { width: 100%; max-width: 1280px; margin: 0 auto; padding-block: 28px 40px; padding-inline: 16px; }
+.home-head h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; letter-spacing: 0.005em; }
+.lead { margin: 0; max-width: 72ch; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
+.inst-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 16px; margin-top: 22px; align-items: stretch;
+}
+.inst {
+  display: flex; flex-direction: column; min-width: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  color: inherit; text-decoration: none; overflow: hidden;
+  transition: border-color 0.15s, background 0.15s;
+}
+.inst:hover { border-color: #4a5159; background: #1b1e22; }
+.inst-thumb { position: relative; width: 100%; max-width: 100%; background: #141619; border-bottom: 1px solid var(--line); }
+.inst-thumb canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.inst-body { display: grid; gap: 8px; padding: 12px 14px 10px; flex: 1; align-content: start; }
+.inst-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.inst-no { font: 500 11.5px/1 var(--mono); color: var(--text-3); }
+.inst-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.inst h2 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.inst-kind { font-size: 12.5px; font-weight: 400; color: var(--text-2); }
+.inst-sum { margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.45; }
+.inst-meta {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 2px 0 0;
+  border-top: 1px solid var(--line);
+}
+.inst-meta > div { padding: 7px 10px 7px 0; min-width: 0; border-bottom: 1px solid var(--line); }
+.inst-meta > div:nth-child(2n) { padding-left: 12px; border-left: 1px solid var(--line); }
+.inst-meta dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.inst-meta dd { margin: 2px 0 0; font: 500 12.5px/1.3 var(--mono); }
+.inst-zones { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; }
+.inst-zones span {
+  padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 3px;
+  font-size: 11.5px; color: var(--text-2); white-space: nowrap;
+}
+.inst-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; border-top: 1px solid var(--line); background: var(--chrome);
+  font-size: 12.5px; font-weight: 500; color: #9cc2ff;
+}
+.inst-foot svg { width: 16px; height: 16px; }
+.inst:hover .inst-foot { color: #c3dbff; }
+.inst-new {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 280px; padding: 24px; border: 1px dashed #3d434a; border-radius: 4px;
+  background: transparent; color: var(--text-2); cursor: pointer; text-align: center;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.inst-new:hover { border-color: #5a626b; background: rgba(255, 255, 255, 0.015); color: var(--text); }
+.inst-new .plus {
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1px solid var(--line-2); border-radius: 4px; background: var(--panel-2); color: var(--text);
+}
+.inst-new .plus svg { width: 18px; height: 18px; }
+.inst-new .t { font-size: 14px; font-weight: 600; color: var(--text); }
+.inst-new .s { font-size: 12.5px; color: var(--text-3); max-width: 30ch; }
+
+/* Buttons and inputs */
+.btn {
+  height: 28px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 9px; border-radius: 3px;
+  border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text);
+  font: 500 12.5px/1 var(--font); cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--hover); border-color: #444a51; }
+.btn:active { background: #1b1e21; }
+.btn.icon { width: 28px; padding: 0; justify-content: center; }
+.btn svg { width: 16px; height: 16px; flex: none; color: var(--text-2); }
+.btn:hover svg { color: var(--text); }
+.btn .chev { width: 14px; height: 14px; margin-left: -2px; }
+.btn.tool.on, .btn[aria-expanded="true"] { background: var(--accent-soft); border-color: #3d6cb3; color: #d6e5ff; }
+.btn.tool.on svg { color: #9cc2ff; }
+.group { display: inline-flex; }
+.group .btn { border-radius: 0; margin-left: -1px; }
+.group .btn:first-child { border-radius: 3px 0 0 3px; margin-left: 0; }
+.group .btn:last-child { border-radius: 0 3px 3px 0; }
+.group .btn.on { position: relative; z-index: 1; }
+.sel select {
+  height: 28px; padding: 0 24px 0 9px; border-radius: 3px;
+  border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text);
+  font: 500 12.5px/1 var(--mono); cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a0a7b0' stroke-width='1.5'%3E%3Cpath d='m4.5 6.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 5px center; background-size: 14px;
+}
+.sel select:hover { border-color: #444a51; }
+.btn:focus-visible, .sel select:focus-visible, .filter button:focus-visible, .row:focus-visible, .log:focus-visible, .mi input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------------ main area */
+.main {
+  display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 12px;
+  min-height: 0; padding-block: 12px 16px; padding-inline: 16px;
+}
+
+.mapview {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+}
+.toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--chrome);
+}
+.vsep { width: 1px; height: 20px; background: var(--line-2); margin: 0 2px; }
+.map-title { color: var(--text-2); font-size: 12px; white-space: nowrap; padding-right: 4px; }
+.map-title .dim { color: var(--text-3); }
+
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 236px;
+  padding: 4px; border-radius: 4px; background: #1b1e22; border: 1px solid var(--line-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.mi { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 3px; cursor: pointer; font-size: 12.5px; }
+.mi:hover { background: var(--hover); }
+.mi input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.mi span { flex: 1; }
+.key { width: 22px; height: 10px; flex: none; }
+.k-path { background: linear-gradient(90deg, #4bb0c8 0 55%, transparent 55% 65%, #4bb0c8 65% 80%, transparent 80% 90%, #4bb0c8 90%) center / 100% 2px no-repeat; }
+.k-res { background: rgba(75, 176, 200, 0.22); border: 1px solid rgba(75, 176, 200, 0.6); }
+.k-v2v { background: repeating-linear-gradient(90deg, #c8ced6 0 3px, transparent 3px 6px) center / 100% 1px no-repeat; }
+.k-safe { border: 1px dashed var(--warn); }
+.k-lbl { font: 500 9px/10px var(--mono); color: var(--text-2); font-style: normal; text-align: center; }
+
+.canvas-wrap { position: relative; flex: 1; min-height: 0; background: #141619; }
+.canvas-wrap canvas { position: absolute; inset: 0; display: block; touch-action: none; }
+.canvas-wrap.tool-block canvas { cursor: crosshair; }
+.canvas-wrap.panning canvas { cursor: grabbing; }
+
+.statusline {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  min-height: 28px; padding: 4px 10px; border-top: 1px solid var(--line); background: var(--chrome);
+  color: var(--text-2); font-size: 12px; white-space: nowrap;
+}
+.statusline .hint { color: var(--text-3); white-space: normal; }
+.legend { display: inline-flex; gap: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.sw { width: 8px; height: 8px; border-radius: 1px; }
+.coord { min-width: 128px; text-align: right; color: var(--text-2); }
+.scale { display: inline-flex; align-items: center; gap: 6px; }
+.scale i { display: block; height: 5px; border: 1px solid var(--text-2); border-top: 0; }
+
+.tip {
+  position: absolute; z-index: 3; pointer-events: none; max-width: 280px;
+  padding: 7px 9px; border-radius: 3px;
+  background: #0e1012; border: 1px solid var(--line-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-size: 12px; line-height: 1.4;
+}
+.tip b { font-family: var(--mono); font-weight: 600; }
+.tip .k { display: block; margin-top: 2px; color: var(--text-2); }
+.tip .a { display: block; margin-top: 4px; color: var(--text-3); font-size: 11.5px; }
+.toast {
+  position: absolute; z-index: 4; left: 50%; top: 10px; transform: translateX(-50%);
+  max-width: calc(100% - 24px); padding: 7px 12px; border-radius: 3px;
+  background: #2a1716; border: 1px solid #6b2e2b; color: #f3c9c6; font-size: 12.5px;
+}
+.toast.good { background: #142219; border-color: #2c5a3d; color: #c7ead4; }
+
+/* ------------------------------------------------------------------ inspector */
+.inspector {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a4047 transparent;
+}
+.sec { border-bottom: 1px solid var(--line); min-width: 0; flex: none; }
+.sec.grow { flex: 1 0 auto; min-height: 220px; display: flex; flex-direction: column; border-bottom: 0; }
+.sec.grow .log { flex: 1 1 0; }
+.sec-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  height: 34px; padding: 0 12px; background: var(--chrome); border-bottom: 1px solid var(--line);
+}
+.sec-head h2 { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text); }
+.meta { color: var(--text-3); font-size: 12px; }
+
+/* Tables */
+.table { font-size: 12.5px; }
+.thead, .row .cells {
+  display: grid; align-items: center; gap: 8px; padding: 0 12px;
+}
+.thead { height: 26px; color: var(--text-3); font-size: 11.5px; font-weight: 500; border-bottom: 1px solid var(--line); }
+.thead .r, .cells .r { text-align: right; justify-self: end; }
+.robots .thead, .robots .cells { grid-template-columns: 84px 96px minmax(0, 1fr) 34px; }
+.tasks .thead, .tasks .cells { grid-template-columns: 58px 40px 40px 62px minmax(0, 1fr); }
+
+.row { position: relative; border-bottom: 1px solid var(--line); cursor: default; }
+.row:last-child { border-bottom: 0; }
+.robots .row { cursor: pointer; padding-block: 7px 8px; }
+.robots .row:hover { background: #1c1f23; }
+.robots .row.sel { background: #1a2433; }
+.robots .row.sel::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.rid { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-weight: 500; }
+.idsq { width: 8px; height: 8px; border-radius: 1px; flex: none; }
+.state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--idle)); flex: none; }
+.route { font-family: var(--mono); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.route b { color: var(--text); font-weight: 500; }
+.route .arr { color: var(--text-3); padding: 0 3px; }
+.load svg { width: 15px; height: 15px; color: #4a5058; }
+.load.on svg { color: var(--payload); }
+.sub { padding: 2px 12px 0 27px; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: transparent; }
+.bar i { display: block; height: 100%; width: 0; background: #4d5560; transition: width 0.3s linear; }
+.row.sel .bar i { background: var(--accent); }
+
+.tasks .row .cells { height: 26px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.tasks .row .cells .st { font-family: var(--font); }
+.tasks .row.queued .cells { color: var(--text-3); }
+.tasks .empty { padding: 8px 12px; color: var(--text-3); }
+
+/* Robot detail */
+.detail { border-top: 1px solid var(--line); background: #171a1d; padding: 8px 12px 10px; }
+.detail h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.detail h3 .x { margin-left: auto; color: var(--text-3); font-weight: 400; font-size: 11.5px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 3px 10px; margin: 0; font-size: 12px; }
+.kv dt { color: var(--text-3); }
+.kv dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.kv dd.m { font-family: var(--mono); }
+
+/* Summary */
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.kpis > div { padding: 8px 12px 9px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+.kpis > div:nth-child(3n) { border-right: 0; }
+.kpis > div:nth-last-child(-n+3) { border-bottom: 0; }
+.kpis dt { color: var(--text-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpis dd { margin: 2px 0 0; font: 500 17px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.kpis dd small { font: 400 11px var(--font); color: var(--text-3); }
+.kpis dd.alarm { color: var(--alarm); }
+
+/* Event log */
+.filter { display: inline-flex; }
+.filter button {
+  height: 22px; padding: 0 8px; border: 1px solid var(--line-2); background: transparent; color: var(--text-2);
+  font-size: 11.5px; cursor: pointer; margin-left: -1px;
+}
+.filter button:first-child { border-radius: 3px 0 0 3px; margin-left: 0; }
+.filter button:last-child { border-radius: 0 3px 3px 0; }
+.filter button.on { background: var(--hover); color: var(--text); }
+.log { flex: 1; min-height: 0; overflow-y: auto; font-size: 12px; scrollbar-width: thin; scrollbar-color: #3a4047 transparent; }
+.ev { display: grid; grid-template-columns: 58px 14px minmax(0, 1fr); gap: 8px; align-items: start; padding: 5px 12px; border-bottom: 1px solid #22262a; }
+.ev time { font-family: var(--mono); color: var(--text-3); font-size: 11.5px; line-height: 17px; }
+.ev .lv { width: 14px; height: 17px; display: grid; place-items: center; }
+.ev .lv svg { width: 12px; height: 12px; }
+.ev p { margin: 0; color: #c3c9d0; line-height: 17px; overflow-wrap: anywhere; }
+.ev.info .lv { color: #5f6873; }
+.ev.notice .lv { color: var(--info); }
+.ev.warn .lv { color: var(--warn); }
+.ev.alarm { background: rgba(229, 83, 75, 0.08); }
+.ev.alarm .lv { color: var(--alarm); }
+.ev.fresh { animation: evIn 1.2s ease-out; }
+@keyframes evIn { from { background: #24292f; } }
+.ev .r { font-family: var(--mono); font-weight: 500; color: var(--text); }
+.ev .r i { display: inline-block; width: 7px; height: 7px; border-radius: 1px; margin-right: 4px; vertical-align: 0; background: var(--rc); }
+.ev .n, .ev .s, .ev .t { font-family: var(--mono); color: var(--text); }
+.ev .e { color: var(--text); }
+
+/* ------------------------------------------------------------------ responsive */
+@media (max-width: 1280px) {
+  .main { grid-template-columns: minmax(0, 1fr) 360px; }
+  .inst-tag, .status-items .si:nth-child(2) { display: none; }
+  .robots .thead, .robots .cells { grid-template-columns: 78px 90px minmax(0, 1fr) 30px; }
+}
+@media (max-height: 860px) and (min-width: 1061px) {
+  .kpis > div { padding: 5px 10px 6px; }
+  .kpis dd { font-size: 15px; }
+  .robots .row { padding-block: 5px 6px; }
+  .tasks .row .cells, .thead { height: 23px; }
+}
+@media (max-width: 1060px) {
+  body { overflow: auto; }
+  .app { height: auto; min-height: 100%; }
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .canvas-wrap { flex: none; aspect-ratio: 1618 / 1018; max-width: 100%; }
+  .inspector { overflow: visible; }
+  .sec.grow { min-height: 320px; max-height: 480px; }
+  .map-title { display: none; }
+}
+@media (max-width: 700px) {
+  .status-items, .legend, .coord, .btn span { display: none; }
+  .btn .chev { display: none; }
+  .btn { padding: 0 7px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis > div:nth-child(3n) { border-right: 1px solid var(--line); }
+  .kpis > div:nth-child(2n) { border-right: 0; }
+  .kpis > div:nth-last-child(3) { border-bottom: 1px solid var(--line); }
+  .robots .thead, .robots .cells { grid-template-columns: 74px 86px minmax(0, 1fr) 26px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+</style>
+</head>
+
+<body>
+  <!--APP-START-->
+  <div class="home" id="home">
+    <header class="topbar">
+      <a class="brand" href="#">
+        <svg class="logo" viewBox="0 0 20 20" aria-hidden="true">
+          <rect width="20" height="20" rx="3" fill="#2f6fd6" />
+          <path d="M5.5 6h6.5M5.5 10h9M5.5 14h6.5" stroke="#fff" stroke-width="1.9" stroke-linecap="round" />
+        </svg>
+        <span class="product">EdgeFleet</span>
+      </a>
+      <nav class="crumbs" aria-label="Location"><span>Site DC-02</span><span class="sep">/</span><span
+          class="cur">Instances</span></nav>
+      <div class="spacer"></div>
+      <div class="status-items">
+        <span class="si"><i class="led ok"></i>Coordination stack online</span>
+        <span class="si" id="instCount">– instances</span>
+      </div>
+    </header>
+
+    <main class="home-main">
+      <div class="home-head">
+        <h1>Instances</h1>
+        <p class="lead">Each instance is a digital twin of one warehouse layout. Three AMRs move payloads between its
+          16 stations and negotiate right of way with each other directly, with no central traffic controller.</p>
+      </div>
+      <div class="inst-grid" id="instGrid">
+        <button class="inst-new" type="button">
+          <span class="plus" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+          </span>
+          <span class="t">Create instance</span>
+          <span class="s">Start from a floor plan, a path network and a robot fleet</span>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <div class="app" id="app" hidden>
+    <header class="topbar">
+      <a class="brand" href="#" title="All instances">
+        <svg class="logo" viewBox="0 0 20 20" aria-hidden="true">
+          <rect width="20" height="20" rx="3" fill="#2f6fd6" />
+          <path d="M5.5 6h6.5M5.5 10h9M5.5 14h6.5" stroke="#fff" stroke-width="1.9" stroke-linecap="round" />
+        </svg>
+        <span class="product">EdgeFleet</span>
+      </a>
+      <nav class="crumbs" aria-label="Location"><a href="#">Instances</a><span class="sep">/</span><span class="cur"
+          id="crumbName">Bay 01</span><span class="inst-tag" id="crumbInst">Instance 1</span></nav>
+      <!-- <span class="mode">Simulation</span> -->
+      <div class="spacer"></div>
+      <div class="status-items">
+        <span class="si"><i class="led ok"></i>V2V mesh</span>
+        <span class="si">Robots <b>3/3</b></span>
+        <span class="si">Sim time <b class="mono" id="clock">--:--:--</b></span>
+      </div>
+      <div class="playback">
+        <button class="btn icon" id="btnPlay" type="button" aria-label="Pause simulation" title="Pause (Space)">
+          <svg id="icoPause" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <rect x="4" y="3" width="3" height="10" rx="0.5" />
+            <rect x="9" y="3" width="3" height="10" rx="0.5" />
+          </svg>
+          <svg id="icoPlay" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" hidden>
+            <path d="M5 3v10l8-5z" />
+          </svg>
+        </button>
+        <label class="sel" title="Simulation speed (1–4)">
+          <span class="vh">Simulation speed</span>
+          <select id="speedSel">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
+        <button class="btn icon" id="btnFull" type="button" aria-label="Full screen" title="Full screen (F)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+            aria-hidden="true">
+            <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="mapview" aria-label="Floor map">
+        <div class="toolbar">
+          <div class="group" role="group" aria-label="Map tool">
+            <button class="btn tool on" type="button" data-tool="select" aria-pressed="true" title="Select and pan (V)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
+                aria-hidden="true">
+                <path d="M3.5 2.5 12 8l-3.8.9L6.3 12.8z" />
+              </svg><span>Select</span>
+            </button>
+            <button class="btn tool" type="button" data-tool="block" aria-pressed="false"
+              title="Block or reopen a segment (B)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <circle cx="8" cy="8" r="5.5" />
+                <path d="m4.2 4.2 7.6 7.6" />
+              </svg><span>Block segment</span>
+            </button>
+          </div>
+          <button class="btn" id="btnObstacle" type="button" title="Block a segment on an active route (O)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
+              aria-hidden="true">
+              <path d="M8 2.5 14 13H2z" />
+              <path d="M8 6.5v3M8 11.2v.1" />
+            </svg><span>Random obstruction</span>
+          </button>
+          <span class="vsep"></span>
+          <div class="group" role="group" aria-label="Zoom">
+            <button class="btn icon" id="zoomOut" type="button" aria-label="Zoom out" title="Zoom out (−)"><svg
+                viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                aria-hidden="true">
+                <path d="M4 8h8" />
+              </svg></button>
+            <button class="btn icon" id="zoomIn" type="button" aria-label="Zoom in" title="Zoom in (+)"><svg
+                viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                aria-hidden="true">
+                <path d="M4 8h8M8 4v8" />
+              </svg></button>
+            <button class="btn icon" id="zoomFit" type="button" aria-label="Fit map to view"
+              title="Fit to view (0)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                stroke-linecap="round" aria-hidden="true">
+                <path d="M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3" />
+                <rect x="5.5" y="5.5" width="5" height="5" />
+              </svg></button>
+          </div>
+          <div class="menu-wrap">
+            <button class="btn" id="btnLayers" type="button" aria-expanded="false" aria-controls="layersMenu">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
+                aria-hidden="true">
+                <path d="M8 2 14 5.2 8 8.4 2 5.2z" />
+                <path d="m2 8 6 3.2L14 8" />
+                <path d="m2 10.8 6 3.2 6-3.2" />
+              </svg><span>Layers</span>
+              <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                aria-hidden="true">
+                <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
+              </svg>
+            </button>
+            <div class="menu" id="layersMenu" role="menu" hidden>
+              <label class="mi"><input type="checkbox" id="lyPaths" data-layer="paths" checked><span>Planned
+                  paths</span><i class="key k-path"></i></label>
+              <label class="mi"><input type="checkbox" id="lyRes" data-layer="reservations" checked><span>Reserved
+                  segments</span><i class="key k-res"></i></label>
+              <label class="mi"><input type="checkbox" id="lyComms" data-layer="comms" checked><span>V2V
+                  messages</span><i class="key k-v2v"></i></label>
+              <label class="mi"><input type="checkbox" id="lySafety" data-layer="safety"><span>Scanner safety
+                  fields</span><i class="key k-safe"></i></label>
+              <label class="mi"><input type="checkbox" id="lyLabels" data-layer="labels" checked><span>Labels</span><i
+                  class="key k-lbl">A1</i></label>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <span class="map-title">Floor plan <span class="dim" id="mapRev">rev 7</span></span>
+        </div>
+
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="map" role="img"
+            aria-label="Floor map of Bay 01: three robots move payloads between 16 stations, reserving path segments and negotiating right of way"></canvas>
+          <div class="tip" id="tip" hidden></div>
+          <div class="toast" id="toast" role="status" hidden></div>
+        </div>
+
+        <footer class="statusline">
+          <span class="hint" id="toolHint">Click a robot or station to inspect it. Drag to pan, scroll to zoom.</span>
+          <span class="spacer"></span>
+          <span class="legend" aria-label="Robot status lights">
+            <span><i class="sw" style="background:var(--ok)"></i>Driving</span>
+            <span><i class="sw" style="background:var(--warn)"></i>Waiting</span>
+            <span><i class="sw" style="background:var(--info)"></i>Loading</span>
+            <span><i class="sw" style="background:var(--idle)"></i>Idle</span>
+          </span>
+          <span class="mono coord" id="cursorPos">X – Y –</span>
+          <span class="scale"><i id="scaleBar"></i><span class="mono">5 m</span></span>
+          <span class="mono" id="zoomPct">100%</span>
+        </footer>
+      </section>
+
+      <aside class="inspector" aria-label="Fleet inspector">
+        <section class="sec">
+          <header class="sec-head">
+            <h2>Robots</h2><span class="meta">3 online</span>
+          </header>
+          <div class="table robots">
+            <div class="thead"><span>Robot</span><span>State</span><span>Task</span><span class="r">Load</span></div>
+            <div id="robotRows"></div>
+          </div>
+          <div class="detail" id="robotDetail" hidden></div>
+        </section>
+
+        <section class="sec">
+          <header class="sec-head">
+            <h2>Summary</h2><span class="meta">this session</span>
+          </header>
+          <dl class="kpis">
+            <div>
+              <dt>Delivered</dt>
+              <dd id="kDel">0</dd>
+            </div>
+            <div>
+              <dt>Throughput</dt>
+              <dd><span id="kThr">–</span><small> /min</small></dd>
+            </div>
+            <div>
+              <dt>Active tasks</dt>
+              <dd id="kAct">0</dd>
+            </div>
+            <div>
+              <dt>Conflicts resolved</dt>
+              <dd id="kCon">0</dd>
+            </div>
+            <div>
+              <dt>Reroutes</dt>
+              <dd id="kRer">0</dd>
+            </div>
+            <div>
+              <dt>Collisions</dt>
+              <dd id="kCol">0</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="sec">
+          <header class="sec-head">
+            <h2>Tasks</h2><span class="meta" id="taskMeta">–</span>
+          </header>
+          <div class="table tasks">
+            <div class="thead"><span>ID</span><span>From</span><span>To</span><span>Robot</span><span>Status</span>
+            </div>
+            <div id="taskRows"></div>
+          </div>
+        </section>
+
+        <section class="sec grow">
+          <header class="sec-head">
+            <h2>Event log</h2>
+            <div class="filter" role="group" aria-label="Filter events">
+              <button type="button" class="on" data-f="all">All</button>
+              <button type="button" data-f="traffic">Traffic</button>
+              <button type="button" data-f="tasks">Tasks</button>
+            </div>
+          </header>
+          <div class="log" id="log" tabindex="0" aria-label="Event log"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+  <!--APP-END-->
+  <script>
+/*
+ * world.js — warehouse layouts ("instances") for EdgeFleet.
+ *
+ * Each layout is plain data: a traffic graph (intersections, junctions, path segments and the
+ * dead-end station spurs robots dock in) plus scenery for the floor plan (racks, storage areas,
+ * doors, labels, column grid). The page picks a layout from the URL hash (#instance-1,
+ * #instance-2); with no hash it shows the instances overview.
+ *
+ * World units: 1 unit ≈ 2 cm. Path segments between nodes are kept ≥ 130 units so a robot
+ * waiting at a hold line has always cleared the node behind it.
+ */
+(function (root) {
+  'use strict';
+  const WH = (root.WH = root.WH || {});
+
+  const UNITS_PER_M = 50;
+  const HALF = 36;                         // lane half-width (72-unit corridors)
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const pairKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+
+  function makeLayout(meta) {
+    return Object.assign({
+      nodes: [], nodeMap: Object.create(null),
+      edges: [], edgeMap: Object.create(null), pairMap: Object.create(null),
+      stations: [], stationMap: Object.create(null),
+      racks: [], bays: [], areas: [], doors: [], labels: [], grid: { xs: [], ys: [] },
+      UNITS_PER_M, HALF, AISLE: HALF * 2,
+    }, meta);
+  }
+  function addNode(L, id, x, y, kind) {
+    const n = { id, x, y, kind, adj: [] };
+    L.nodes.push(n);
+    L.nodeMap[id] = n;
+    return n;
+  }
+  function addEdge(L, a, b, kind, label, sub) {
+    const A = L.nodeMap[a], B = L.nodeMap[b];
+    const e = { id: 'E' + pad2(L.edges.length), a, b, kind, label, sub, len: Math.hypot(B.x - A.x, B.y - A.y) };
+    e.name = kind === 'spur' ? label + ' approach' : label + ' ' + sub;
+    L.edges.push(e);
+    L.edgeMap[e.id] = e;
+    L.pairMap[pairKey(a, b)] = e;
+    A.adj.push({ to: b, e });
+    B.adj.push({ to: a, e });
+    return e;
+  }
+  function addStation(L, num, x, y, dir, junction, zone) {
+    const id = 'S' + pad2(num);
+    const n = addNode(L, id, x, y, 'station');
+    const st = { id, num, x, y, dir, junction, zone, stand: { x: x + dir.x * 42, y: y + dir.y * 42 } };
+    n.station = st;
+    L.stations.push(st);
+    L.stationMap[id] = st;
+    return st;
+  }
+  function finalize(L) {
+    L.stations.sort((a, b) => a.num - b.num);
+    L.stations.forEach((st) => addEdge(L, st.id, st.junction, 'spur', st.id, 'lane'));
+    L.edgeBetween = (a, b) => L.pairMap[pairKey(a, b)] || null;
+    L.floorM = [(L.WALL.x1 - L.WALL.x0) / UNITS_PER_M, (L.WALL.y1 - L.WALL.y0) / UNITS_PER_M];
+    return L;
+  }
+
+  // ======================================================================== Instance 1 · Bay 01
+  // A regular cross-aisle grid: four storage aisles, three cross-aisles, pick-face bays cut into
+  // the racking, and dock doors on the north and south walls.
+  function buildBay01() {
+    const COLS = [250, 610, 970, 1330], ROWS = [200, 500, 800], ROW_IDS = ['A', 'B', 'C'], MIDS = [350, 650];
+    const BAY = 82, DOCK_Y = [95, 905];
+    const L = makeLayout({
+      id: 'bay-01', slug: 'instance-1', instance: 1, name: 'Bay 01', site: 'DC-02', rev: 7,
+      kind: 'Cross-aisle grid',
+      summary: 'Four storage aisles crossed by three cross-aisles, pick faces cut into the racking, and dock doors on the north and south walls.',
+      W: 1600, H: 1000, WALL: { x0: 30, y0: 30, x1: 1570, y1: 970 },
+      bounds: { x0: -30, y0: -30, x1: 1588, y1: 988 },
+      zoneNames: { inbound: 'Inbound dock', storage: 'Storage pick face', outbound: 'Outbound dock' },
+      robots: [
+        { id: 'AMR-01', color: '#4bb0c8', start: 'S02' },
+        { id: 'AMR-02', color: '#8f88ea', start: 'S08' },
+        { id: 'AMR-03', color: '#cc76b8', start: 'S13' },
+      ],
+      flows: [
+        { w: 0.34, from: 'inbound', to: 'storage' },
+        { w: 0.34, from: 'storage', to: 'outbound' },
+        { w: 0.16, from: 'storage', to: 'storage' },
+        { w: 0.16, from: 'inbound', to: 'outbound' },
+      ],
+    });
+    ROW_IDS.forEach((r, ri) => COLS.forEach((x, ci) => addNode(L, r + (ci + 1), x, ROWS[ri], 'cross')));
+    COLS.forEach((x, ci) => {
+      addNode(L, 'J' + pad2(5 + ci), x, MIDS[0], 'junction');
+      addNode(L, 'J' + pad2(9 + ci), x, MIDS[1], 'junction');
+    });
+    COLS.forEach((x, ci) => addStation(L, 1 + ci, x, DOCK_Y[0], { x: 0, y: -1 }, 'A' + (ci + 1), 'inbound'));
+    COLS.forEach((x, ci) => addStation(L, 5 + ci, x + BAY, MIDS[0], { x: 1, y: 0 }, 'J' + pad2(5 + ci), 'storage'));
+    COLS.forEach((x, ci) => addStation(L, 9 + ci, x + BAY, MIDS[1], { x: 1, y: 0 }, 'J' + pad2(9 + ci), 'storage'));
+    COLS.forEach((x, ci) => addStation(L, 13 + ci, x, DOCK_Y[1], { x: 0, y: 1 }, 'C' + (ci + 1), 'outbound'));
+    ROW_IDS.forEach((r) => {
+      for (let c = 1; c < 4; c++) addEdge(L, r + c, r + (c + 1), 'cross', 'Cross-aisle ' + r, c + '–' + (c + 1));
+    });
+    COLS.forEach((_, ci) => {
+      const a = ci + 1, j1 = 'J' + pad2(5 + ci), j2 = 'J' + pad2(9 + ci);
+      addEdge(L, 'A' + a, j1, 'aisle', 'Aisle ' + a, 'A–B');
+      addEdge(L, j1, 'B' + a, 'aisle', 'Aisle ' + a, 'A–B');
+      addEdge(L, 'B' + a, j2, 'aisle', 'Aisle ' + a, 'B–C');
+      addEdge(L, j2, 'C' + a, 'aisle', 'Aisle ' + a, 'B–C');
+    });
+
+    // Scenery
+    [[244, 456], [544, 756]].forEach(([y0, y1]) => {
+      L.racks.push({ x0: 46, x1: COLS[0] - HALF - 8, y0, y1, faces: ['right'] });
+      for (let c = 0; c < 3; c++) L.racks.push({ x0: COLS[c] + HALF + 8, x1: COLS[c + 1] - HALF - 8, y0, y1, faces: ['left', 'right'] });
+      L.racks.push({ x0: COLS[3] + HALF + 8, x1: 1554, y0, y1, faces: ['left'] });
+    });
+    L.racks.forEach((rk, i) => { rk.id = 'R' + pad2(i + 1); rk.pitch = 53; });
+    COLS.forEach((x) => MIDS.forEach((y) => L.bays.push({ x0: x + HALF, x1: x + HALF + 118, y0: y - 46, y1: y + 46 })));
+    [[48, 148], [852, 952]].forEach(([y0, y1]) => {
+      L.areas.push({ kind: 'staging', x0: 48, x1: COLS[0] - 64, y0, y1 });
+      for (let c = 0; c < 3; c++) L.areas.push({ kind: 'staging', x0: COLS[c] + 64, x1: COLS[c + 1] - 64, y0, y1 });
+      L.areas.push({ kind: 'staging', x0: COLS[3] + 64, x1: 1552, y0, y1 });
+    });
+    COLS.forEach((x, i) => {
+      L.doors.push({ side: 'top', pos: x, w: 80, label: 'D' + (i + 1) });
+      L.doors.push({ side: 'bottom', pos: x, w: 80, label: 'D' + (i + 5) });
+    });
+    L.labels.push({ text: 'Inbound docks', x: 52, y: 160, align: 'left', size: 10.5, weight: 500 });
+    L.labels.push({ text: 'Outbound docks', x: 52, y: 840, align: 'left', size: 10.5, weight: 500 });
+    COLS.forEach((x, i) => [275, 575].forEach((y) => L.labels.push({ text: 'Aisle ' + (i + 1), x: x - 22, y, rot: -90 })));
+    ROWS.forEach((y, i) => [430, 1150].forEach((x) => L.labels.push({ text: 'Cross-aisle ' + ROW_IDS[i], x, y: y - 22 })));
+    for (let k = 0; k <= 8; k++) L.grid.xs.push(L.WALL.x0 + k * 192.5);
+    for (let k = 0; k <= 5; k++) L.grid.ys.push(L.WALL.y0 + k * 188);
+    return finalize(L);
+  }
+
+  // ======================================================================== Instance 2 · Bay 02
+  // A mixed-use hall: two banks of high-bay racking on the west side with rack-end P&D points on
+  // the main aisle, bulk floor storage in the centre, packing cells fed by an overhead conveyor
+  // along the north wall, dock doors on the east wall, and cube storage plus pallet floor
+  // storage in the south-east.
+  function buildBay02() {
+    const L = makeLayout({
+      id: 'bay-02', slug: 'instance-2', instance: 2, name: 'Bay 02', site: 'DC-02', rev: 3,
+      kind: 'Mixed-use hall',
+      summary: 'High-bay racking with rack-end P&D points, bulk floor storage, packing cells on an overhead conveyor, cube storage and east-wall dock doors.',
+      W: 1800, H: 1120, WALL: { x0: 30, y0: 30, x1: 1770, y1: 1090 },
+      bounds: { x0: -30, y0: -30, x1: 1788, y1: 1108 },
+      zoneNames: {
+        racking: 'Racking P&D point', bulk: 'Bulk storage P&D point', packing: 'Packing cell',
+        dock: 'Dock door', cube: 'Cube storage port',
+      },
+      robots: [
+        { id: 'AMR-01', color: '#4bb0c8', start: 'S03' },
+        { id: 'AMR-02', color: '#8f88ea', start: 'S09' },
+        { id: 'AMR-03', color: '#cc76b8', start: 'S15' },
+      ],
+      flows: [
+        { w: 0.22, from: 'dock', to: 'racking' },
+        { w: 0.22, from: 'racking', to: 'packing' },
+        { w: 0.16, from: 'cube', to: 'packing' },
+        { w: 0.2, from: 'packing', to: 'dock' },
+        { w: 0.1, from: 'dock', to: 'bulk' },
+        { w: 0.1, from: 'bulk', to: 'racking' },
+      ],
+    });
+    const n = (id, x, y, kind) => addNode(L, id, x, y, kind || 'cross');
+    // Top aisle, west perimeter aisle and bottom aisle around the racking
+    n('N1', 75, 75); n('N2', 720, 75); n('N3', 1000, 75);
+    n('W1', 75, 560); n('B1', 75, 1045); n('B2', 720, 1045);
+    // Main aisle (east–west) through the racking and across the hall
+    n('M1', 270, 560, 'junction'); n('M2', 422, 560, 'junction'); n('M3', 574, 560, 'junction');
+    n('M4', 720, 560); n('M5', 860, 560, 'junction'); n('M6', 1000, 560); n('M7', 1280, 560); n('M8', 1560, 560);
+    // Packing aisle under the packing cells
+    n('P1', 1000, 330); n('P2', 1140, 330, 'junction'); n('P3', 1280, 330); n('P4', 1420, 330, 'junction'); n('P5', 1560, 330);
+    // South aisle along the storage areas
+    n('H1', 720, 780); n('H2', 1000, 780); n('H3', 1130, 780, 'junction'); n('H4', 1280, 780); n('H5', 1560, 780);
+    // Dead-end dock lane at the north-east corner
+    n('E1', 1560, 120, 'junction');
+
+    // Stations
+    const up = { x: 0, y: -1 }, down = { x: 0, y: 1 }, east = { x: 1, y: 0 };
+    addStation(L, 1, 270, 480, up, 'M1', 'racking');
+    addStation(L, 2, 270, 640, down, 'M1', 'racking');
+    addStation(L, 3, 422, 480, up, 'M2', 'racking');
+    addStation(L, 4, 422, 640, down, 'M2', 'racking');
+    addStation(L, 5, 574, 480, up, 'M3', 'racking');
+    addStation(L, 6, 574, 640, down, 'M3', 'racking');
+    addStation(L, 7, 860, 480, up, 'M5', 'bulk');
+    addStation(L, 8, 1140, 250, up, 'P2', 'packing');
+    addStation(L, 9, 1280, 250, up, 'P3', 'packing');
+    addStation(L, 10, 1420, 250, up, 'P4', 'packing');
+    addStation(L, 11, 1670, 120, east, 'E1', 'dock');
+    addStation(L, 12, 1670, 330, east, 'P5', 'dock');
+    addStation(L, 13, 1670, 560, east, 'M8', 'dock');
+    addStation(L, 14, 1670, 780, east, 'H5', 'dock');
+    addStation(L, 15, 1130, 860, down, 'H3', 'cube');
+    addStation(L, 16, 1280, 860, down, 'H4', 'cube');
+
+    const path = (label, ids) => { for (let i = 1; i < ids.length; i++) addEdge(L, ids[i - 1], ids[i], 'aisle', label, ids[i - 1] + '–' + ids[i]); };
+    path('Top aisle', ['N1', 'N2', 'N3']);
+    path('West aisle', ['N1', 'W1', 'B1']);
+    path('Bottom aisle', ['B1', 'B2']);
+    path('Main aisle', ['W1', 'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8']);
+    path('Aisle 1', ['N2', 'M4', 'H1', 'B2']);
+    path('Aisle 2', ['N3', 'P1', 'M6', 'H2']);
+    path('Packing aisle', ['P1', 'P2', 'P3', 'P4', 'P5']);
+    path('Aisle 3', ['P3', 'M7', 'H4']);
+    path('Dock aisle', ['E1', 'P5', 'M8', 'H5']);
+    path('South aisle', ['H1', 'H2', 'H3', 'H4', 'H5']);
+
+    // Scenery: two banks of seven racks, pick aisles between them too narrow for the AMRs
+    for (let bank = 0; bank < 2; bank++) {
+      for (let i = 0; i < 7; i++) {
+        const x0 = 130 + 76 * i;
+        L.racks.push({ x0, x1: x0 + 52, y0: bank ? 705 : 140, y1: bank ? 1000 : 415, faces: ['left', 'right'], pitch: 27 });
+      }
+    }
+    L.racks.forEach((rk, i) => { rk.id = 'R' + pad2(i + 1); });
+    L.areas.push({ kind: 'pallets', x0: 790, y0: 140, x1: 930, y1: 415, cols: 4, rows: 8, label: 'Bulk storage' });
+    L.areas.push({ kind: 'conveyor', pts: [[1070, 432], [1070, 52], [1210, 52], [1210, 300]], overhead: true, label: 'Overhead conveyor', lx: 1224, ly: 290 });
+    [[1085, 'PC-1'], [1225, 'PC-2'], [1365, 'PC-3']].forEach(([x0, label]) => {
+      L.areas.push({ kind: 'cell', x0, y0: 64, x1: x0 + 110, y1: 186, label });
+    });
+    L.areas.push({ kind: 'totes', x0: 1060, y0: 614, x1: 1236, y1: 720, label: 'Staging' });
+    L.areas.push({ kind: 'totes', x0: 1324, y0: 614, x1: 1500, y1: 720, label: 'Staging' });
+    L.areas.push({ kind: 'cube', x0: 1062, y0: 924, x1: 1334, y1: 1066, label: 'Cube storage' });
+    L.areas.push({ kind: 'pallets', x0: 1384, y0: 858, x1: 1746, y1: 1066, cols: 8, rows: 4, label: 'Pallet floor storage' });
+    L.areas.push({ kind: 'carts', x0: 784, y0: 852, x1: 1030, y1: 1000, label: 'Cart parking' });
+    [120, 330, 560, 780].forEach((y, i) => L.doors.push({ side: 'right', pos: y, w: 80, label: 'D' + (i + 1) }));
+    L.labels.push({ text: 'High-bay racking', x: 132, y: 128, align: 'left', size: 10.5, weight: 500 });
+    L.labels.push({ text: 'Rack-end P&D', x: 132, y: 690, align: 'left', size: 10 });
+    L.labels.push({ text: 'Main aisle', x: 1140, y: 538 });
+    L.labels.push({ text: 'Main aisle', x: 350, y: 538 });
+    L.labels.push({ text: 'Packing aisle', x: 1490, y: 308 });
+    L.labels.push({ text: 'South aisle', x: 860, y: 758 });
+    L.labels.push({ text: 'Top aisle', x: 400, y: 53 });
+    L.labels.push({ text: 'Bottom aisle', x: 400, y: 1023 });
+    L.labels.push({ text: 'West aisle', x: 53, y: 320, rot: -90 });
+    L.labels.push({ text: 'Dock doors', x: 1742, y: 450, rot: -90, size: 10.5, weight: 500 });
+    for (let k = 0; k <= 9; k++) L.grid.xs.push(L.WALL.x0 + (k * (L.WALL.x1 - L.WALL.x0)) / 9);
+    for (let k = 0; k <= 6; k++) L.grid.ys.push(L.WALL.y0 + (k * (L.WALL.y1 - L.WALL.y0)) / 6);
+    return finalize(L);
+  }
+
+  // ======================================================================== geometry helpers
+  const TAU = Math.PI * 2;
+  function angDiff(a, b) {
+    let d = (a - b) % TAU;
+    if (d > Math.PI) d -= TAU;
+    if (d < -Math.PI) d += TAU;
+    return d;
+  }
+
+  /** Sampled path with rounded corners, parametrised by arc length. */
+  function Path(xs, ys, cs, vh, length, nodeS, corners) {
+    this.xs = xs; this.ys = ys; this.cs = cs; this.vh = vh;
+    this.n = xs.length; this.length = length; this.nodeS = nodeS; this.corners = corners;
+  }
+  Path.prototype.index = function (s) {
+    const cs = this.cs;
+    if (s <= 0) return 0;
+    if (s >= this.length) return this.n - 1;
+    let lo = 0, hi = this.n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (cs[mid] <= s) lo = mid; else hi = mid;
+    }
+    return lo;
+  };
+  Path.prototype.at = function (s, out) {
+    out = out || {};
+    const k = this.index(s);
+    if (k >= this.n - 1) {
+      out.x = this.xs[this.n - 1]; out.y = this.ys[this.n - 1]; out.h = this.vh[this.n - 1];
+      return out;
+    }
+    const seg = this.cs[k + 1] - this.cs[k];
+    const t = seg > 1e-9 ? Math.min(1, Math.max(0, (s - this.cs[k]) / seg)) : 0;
+    out.x = this.xs[k] + (this.xs[k + 1] - this.xs[k]) * t;
+    out.y = this.ys[k] + (this.ys[k + 1] - this.ys[k]) * t;
+    out.h = this.vh[k] + angDiff(this.vh[k + 1], this.vh[k]) * t;
+    return out;
+  };
+  Path.prototype.headingAt = function (s) { return this.at(s).h; };
+
+  function buildPath(pts, radius) {
+    const xs = [], ys = [], cs = [];
+    const nodeS = new Array(pts.length).fill(0);
+    const corners = [];
+    let total = 0;
+    const push = (x, y) => {
+      const n = xs.length;
+      if (n) {
+        const d = Math.hypot(x - xs[n - 1], y - ys[n - 1]);
+        if (d < 1e-4) return;
+        total += d;
+      }
+      xs.push(x); ys.push(y); cs.push(total);
+    };
+    const lineTo = (x, y) => {
+      const n = xs.length, x0 = xs[n - 1], y0 = ys[n - 1];
+      const d = Math.hypot(x - x0, y - y0);
+      const steps = Math.max(1, Math.ceil(d / 5));
+      for (let k = 1; k <= steps; k++) push(x0 + ((x - x0) * k) / steps, y0 + ((y - y0) * k) / steps);
+    };
+    push(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      const P = pts[i];
+      if (i === pts.length - 1) { lineTo(P.x, P.y); nodeS[i] = total; break; }
+      const Pp = pts[i - 1], N = pts[i + 1];
+      let d1x = P.x - Pp.x, d1y = P.y - Pp.y;
+      const l1 = Math.hypot(d1x, d1y);
+      let d2x = N.x - P.x, d2y = N.y - P.y;
+      const l2 = Math.hypot(d2x, d2y);
+      if (l1 < 1e-6 || l2 < 1e-6) { lineTo(P.x, P.y); nodeS[i] = total; continue; }
+      d1x /= l1; d1y /= l1; d2x /= l2; d2y /= l2;
+      const dot = d1x * d2x + d1y * d2y;
+      const theta = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (theta < 0.02 || theta > Math.PI - 0.05) { lineTo(P.x, P.y); nodeS[i] = total; continue; }
+      const inAvail = Math.hypot(P.x - xs[xs.length - 1], P.y - ys[ys.length - 1]);
+      const tanH = Math.tan(theta / 2);
+      const t = Math.min(radius * tanH, inAvail - 0.01, l2 * 0.5);
+      if (t < 0.5) { lineTo(P.x, P.y); nodeS[i] = total; continue; }
+      const r = t / tanH;
+      const ax = P.x - d1x * t, ay = P.y - d1y * t;
+      const bx = P.x + d2x * t, by = P.y + d2y * t;
+      lineTo(ax, ay);
+      const s0 = total;
+      let nx = d2x - d1x * dot, ny = d2y - d1y * dot;
+      const nl = Math.hypot(nx, ny);
+      nx /= nl; ny /= nl;
+      const ccx = ax + nx * r, ccy = ay + ny * r;
+      const a0 = Math.atan2(ay - ccy, ax - ccx);
+      const sweep = angDiff(Math.atan2(by - ccy, bx - ccx), a0);
+      const arcLen = Math.abs(sweep) * r;
+      const steps = Math.max(3, Math.ceil(arcLen / 2));
+      for (let k = 1; k <= steps; k++) {
+        const a = a0 + (sweep * k) / steps;
+        push(ccx + Math.cos(a) * r, ccy + Math.sin(a) * r);
+      }
+      nodeS[i] = s0 + arcLen / 2;
+      corners.push({ s0, s1: total, r });
+    }
+    const n = xs.length;
+    const seg = new Float64Array(Math.max(1, n - 1));
+    for (let k = 0; k < n - 1; k++) seg[k] = Math.atan2(ys[k + 1] - ys[k], xs[k + 1] - xs[k]);
+    const vh = new Float64Array(n);
+    for (let k = 0; k < n; k++) {
+      if (n === 1) vh[k] = 0;
+      else if (k === 0) vh[k] = seg[0];
+      else if (k === n - 1) vh[k] = seg[n - 2];
+      else vh[k] = seg[k - 1] + angDiff(seg[k], seg[k - 1]) / 2;
+    }
+    return new Path(xs, ys, cs, vh, total, nodeS, corners);
+  }
+
+  // ======================================================================== registry & routing
+  const layouts = { 'bay-01': buildBay01(), 'bay-02': buildBay02() };
+  const list = [layouts['bay-01'], layouts['bay-02']];
+
+  function routeFromHash() {
+    const h = ((root.location && root.location.hash) || '').replace(/^#/, '');
+    const hit = list.find((l) => l.slug === h);
+    return hit ? { view: 'console', layout: hit.id } : { view: 'home', layout: null };
+  }
+  // WH_LAYOUT lets headless tools (stress test) pick a layout without a URL.
+  const route = root.WH_LAYOUT ? { view: 'console', layout: root.WH_LAYOUT } : routeFromHash();
+
+  WH.layouts = layouts;
+  WH.layoutList = list;
+  WH.route = route;
+  WH.world = layouts[route.layout] || layouts['bay-01'];
+  WH.geom = { buildPath, angDiff, TAU };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+/*
+ * sim.js — decentralized multi-AMR coordination for the EdgeFleet digital twin.
+ *
+ * Every robot plans its own route and broadcasts it as an "intent" (directed corridor
+ * segments with time windows). Shared space is claimed through peer-to-peer reservations:
+ *   • before crossing a node a robot must hold the node AND the corridor segment after it;
+ *   • corridor segments are single-track: robots may share one only in the same direction;
+ *   • contested claims are negotiated by priority (payload > arrival time > waiting time);
+ *   • robots that can take a cheaper detour re-plan instead of waiting;
+ *   • wait-for cycles are detected and broken by the lowest-priority robot backing off.
+ * A continuous safety envelope sits underneath as a last line of defence.
+ *
+ * DOM-free and seedable so it can be stress-tested headless (see tools/stress-test.js).
+ */
+(function (root) {
+  'use strict';
+  const WH = (root.WH = root.WH || {});
+  const Wd = WH.world, G = WH.geom;
+
+  const CFG = {
+    vMax: 92,            // units/s (≈ 1.8 m/s)
+    accel: 95,
+    decel: 140,
+    hardDecel: 420,
+    latAcc: 90,          // cornering limit
+    omegaMax: 2.4,       // rad/s, in-place rotation
+    alpha: 6,
+    L: 48, Wr: 34,       // robot footprint
+    stopDist: 64,        // hold line distance before a node centre
+    releaseDist: 64,     // node lock released once this far past it
+    entryGap: 140,       // same-direction spacing needed to enter a corridor
+    safeDist: 62,        // safety envelope (centre to centre)
+    reqRange: 120,       // reservations requested this far before the hold line
+    fillet: 26,
+    dockSpeed: 34,
+    transferTime: 2.1,
+    idleDelay: 0.8,
+    unitsPerM: Wd.UNITS_PER_M,
+  };
+
+  // Fleet and task flows come with the layout (instance)
+  const ROBOT_DEFS = Wd.robots;
+
+  const OBSTACLE_REASONS = ['stray pallet', 'spill clean-up', 'manual forklift at work', 'pedestrian crossing'];
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const sameNodes = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+  function turnCost(prev, node, to) {
+    if (!prev) return 0;
+    const P = Wd.nodeMap[prev], N = Wd.nodeMap[node], T = Wd.nodeMap[to];
+    const d = Math.abs(G.angDiff(Math.atan2(T.y - N.y, T.x - N.x), Math.atan2(N.y - P.y, N.x - P.x)));
+    return d < 0.1 ? 0 : 0.55 * (d / (Math.PI / 2));
+  }
+
+  function footprint(r) {
+    const c = Math.cos(r.h), s = Math.sin(r.h), hl = CFG.L / 2, hw = CFG.Wr / 2;
+    return [
+      [r.x + c * hl - s * hw, r.y + s * hl + c * hw],
+      [r.x + c * hl + s * hw, r.y + s * hl - c * hw],
+      [r.x - c * hl + s * hw, r.y - s * hl - c * hw],
+      [r.x - c * hl - s * hw, r.y - s * hl + c * hw],
+    ];
+  }
+  function obbOverlap(a, b) {
+    const A = footprint(a), B = footprint(b);
+    for (const ang of [a.h, a.h + Math.PI / 2, b.h, b.h + Math.PI / 2]) {
+      const ax = Math.cos(ang), ay = Math.sin(ang);
+      let amin = Infinity, amax = -Infinity, bmin = Infinity, bmax = -Infinity;
+      for (const p of A) { const d = p[0] * ax + p[1] * ay; if (d < amin) amin = d; if (d > amax) amax = d; }
+      for (const p of B) { const d = p[0] * ax + p[1] * ay; if (d < bmin) bmin = d; if (d > bmax) bmax = d; }
+      if (amax < bmin || bmax < amin) return false;
+    }
+    return true;
+  }
+
+  const tmp = { x: 0, y: 0, h: 0 };
+
+  class Sim {
+    constructor(opts) {
+      opts = opts || {};
+      this.cfg = CFG;
+      this.seed = opts.seed != null ? opts.seed >>> 0 : (Math.random() * 4294967296) >>> 0;
+      this.rand = mulberry32(this.seed);
+      this.t = 0;
+      this.autoObstructions = opts.autoObstructions !== false;
+      this.nodeHolder = Object.create(null);
+      this.edgeHold = Object.create(null);
+      this.obstructions = Object.create(null);
+      this.stations = Object.create(null);
+      for (const s of Wd.stations) this.stations[s.id] = { id: s.id, def: s, obj: null, res: null };
+      this.tasks = [];
+      this.pending = [];
+      this.taskSeq = 0;
+      this.events = [];
+      this.eventSeq = 0;
+      this.recent = Object.create(null);
+      this.fx = { links: [], rings: [], marks: [], ghosts: [], taskLinks: [], edges: [] };
+      this.stats = {
+        deliveries: 0, collisions: 0, conflicts: 0, yields: 0, reroutes: 0,
+        negotiations: 0, deadlocks: 0, minSep: Infinity, tasksCreated: 0,
+      };
+      this.negotiated = Object.create(null);
+      this.nextIntent = 0.6;
+      this.nextTaskT = 0.3;
+      this.nextObsT = 28 + this.rand() * 10;
+      this.deadlockCD = 0;
+      this.contacts = new Set();
+      this.robots = ROBOT_DEFS.map((d, i) => this.makeRobot(d, i));
+      this.emit('system', ['Session started: 3 robots connected, 16 stations loaded']);
+    }
+
+    makeRobot(d, i) {
+      const st = Wd.stationMap[d.start];
+      const r = {
+        i, id: d.id, color: d.color,
+        x: st.x, y: st.y, h: Math.atan2(st.dir.y, st.dir.x), v: 0, w: 0,
+        mode: 'idle', motion: 'parked', station: st.id, prev: st.id,
+        route: null, s: 0, targetH: 0, arrived: false,
+        task: null, carrying: false,
+        held: { nodes: new Set(), edges: new Set() },
+        block: null, waitAcc: 0, follow: -1,
+        timer: 0.5 + i * 0.9,
+        deliveries: 0, odo: 0, legOdo: 0,
+        replanCD: 0, lastReroute: -99, rerouteText: '', pendingReplan: null, needRoute: false,
+        expectHold: null,
+        beacon: 0.4 + i * 0.8,
+      };
+      this.holdNode(r, st.id);
+      return r;
+    }
+
+    // ------------------------------------------------------------------ events & fx
+    emit(type, parts, key, gap) {
+      if (key) {
+        const last = this.recent[key];
+        if (last != null && this.t - last < (gap || 6)) return null;
+        this.recent[key] = this.t;
+      }
+      const ev = { id: ++this.eventSeq, t: this.t, type, parts };
+      this.events.push(ev);
+      if (this.events.length > 160) this.events.splice(0, this.events.length - 160);
+      return ev;
+    }
+    fxLink(a, b, kind, chipA, chipB, dur) {
+      this.fx.links.push({ a, b, kind, chipA, chipB, t0: this.t, dur: dur || 2.4 });
+    }
+
+    // ------------------------------------------------------------------ locks
+    holdNode(r, n) { this.nodeHolder[n] = r.i; r.held.nodes.add(n); }
+    releaseNode(r, n) {
+      if (this.nodeHolder[n] === r.i) delete this.nodeHolder[n];
+      r.held.nodes.delete(n);
+    }
+    holdEdge(r, e, to) {
+      let eh = this.edgeHold[e.id];
+      if (!eh) eh = this.edgeHold[e.id] = { to, set: new Set() };
+      if (eh.set.size === 0) eh.to = to;
+      eh.set.add(r.i);
+      r.held.edges.add(e.id);
+    }
+    releaseEdge(r, eid) {
+      const eh = this.edgeHold[eid];
+      if (eh) { eh.set.delete(r.i); if (!eh.set.size) delete this.edgeHold[eid]; }
+      r.held.edges.delete(eid);
+    }
+    edgeHeld(eid) { const eh = this.edgeHold[eid]; return !!(eh && eh.set.size); }
+
+    // ------------------------------------------------------------------ main step
+    step(dt) {
+      this.t += dt;
+      this.updateObstructions();
+      this.updateStations();
+      this.updateTasks();
+      for (const r of this.robots) this.updateMode(r, dt);
+      if (this.t >= this.nextIntent) { this.nextIntent = this.t + 0.3; this.intentCheck(); }
+      this.arbitrate();
+      this.handleWaits(dt);
+      for (const r of this.robots) this.move(r, dt);
+      for (const r of this.robots) this.progress(r);
+      this.checkSafety();
+      this.updateFx();
+    }
+
+    updateMode(r, dt) {
+      r.replanCD = Math.max(0, r.replanCD - dt);
+      r.beacon -= dt;
+      if (r.beacon <= 0) {
+        r.beacon = 2.6 + this.rand() * 0.8;
+        this.fx.rings.push({ kind: 'beacon', x: r.x, y: r.y, t0: this.t, dur: 1.9, color: r.color });
+      }
+      switch (r.mode) {
+        case 'idle':
+          r.timer -= dt;
+          break;
+        case 'loading':
+        case 'unloading':
+          r.timer += dt;
+          if (r.timer >= CFG.transferTime) this.finishTransfer(r);
+          break;
+        default:
+          if (r.needRoute) { if (r.replanCD <= 0) { r.replanCD = 1; this.startLeg(r); } break; }
+          if (r.pendingReplan && this.canReplan(r)) {
+            const p = r.pendingReplan;
+            r.pendingReplan = null;
+            this.applyReroute(r, p);
+          }
+          if (r.route && r.arrived) this.arrive(r);
+      }
+    }
+
+    // ------------------------------------------------------------------ stations & tasks
+    updateStations() {
+      for (const id in this.stations) {
+        const st = this.stations[id];
+        if (st.obj && st.obj.state === 'delivered' && this.t - st.obj.t0 > 3.6) st.obj = null;
+      }
+    }
+
+    stationFree(id) {
+      const st = this.stations[id];
+      if (st.res || st.obj) return false;
+      if (this.nodeHolder[id] !== undefined) return false;
+      for (const r of this.robots) {
+        if (r.station === id) return false;
+        if (r.route && r.route.goal === id) return false;
+      }
+      return true;
+    }
+
+    pickWeighted(list, wf) {
+      let tot = 0;
+      for (const it of list) tot += wf(it);
+      let x = this.rand() * tot;
+      for (const it of list) { x -= wf(it); if (x <= 0) return it; }
+      return list[list.length - 1];
+    }
+
+    createTask() {
+      const free = Wd.stations.filter((s) => this.stationFree(s.id));
+      if (free.length < 2) return null;
+      const zone = (z) => free.filter((s) => s.zone === z);
+      const flows = Wd.flows
+        .map((f) => ({ w: f.w, from: zone(f.from), to: zone(f.to) }))
+        .filter((f) => f.from.length && f.to.some((s) => f.from.some((p) => p !== s)));
+      if (!flows.length) return null;
+      const flow = this.pickWeighted(flows, (f) => f.w);
+      const fromList = flow.from.filter((p) => flow.to.some((s) => s !== p));
+      const p = fromList[Math.floor(this.rand() * fromList.length)];
+      const d = this.pickWeighted(flow.to.filter((s) => s !== p),
+        (s) => 0.25 + Math.pow(Math.hypot(s.x - p.x, s.y - p.y) / 400, 1.4));
+      const task = {
+        id: 'T-' + (1000 + ++this.taskSeq),
+        pickup: p.id, drop: d.id, state: 'pending', robot: -1, created: this.t, preview: null,
+      };
+      this.tasks.push(task);
+      this.pending.push(task);
+      this.stats.tasksCreated++;
+      this.stations[p.id].res = task.id;
+      this.stations[d.id].res = task.id;
+      this.stations[p.id].obj = { state: 'waiting', task: task.id, t0: this.t };
+      this.emit('task', ['Task ', { task: task.id }, ' created: ', { s: p.id }, ' → ', { s: d.id }]);
+      this.fx.rings.push({ kind: 'spawn', x: p.stand.x, y: p.stand.y, t0: this.t, dur: 1.4, color: '#e8b46a' });
+      return task;
+    }
+
+    updateTasks() {
+      if (this.t >= this.nextTaskT && this.pending.length < 2) {
+        this.nextTaskT = this.t + (this.createTask() ? 1.2 + this.rand() * 1.6 : 0.6);
+      }
+      const ready = this.robots.filter((r) => r.mode === 'idle' && r.timer <= 0);
+      if (!ready.length || !this.pending.length) return;
+      let best = null;
+      for (const r of ready) {
+        for (const task of this.pending) {
+          const plan = this.planFrom(r, task.pickup, { noIntent: true });
+          if (plan && (!best || plan.cost < best.bid)) best = { r, task, bid: plan.cost };
+        }
+      }
+      if (best) this.assign(best.r, best.task, best.bid);
+    }
+
+    assign(r, task, bid) {
+      this.pending.splice(this.pending.indexOf(task), 1);
+      task.state = 'assigned';
+      task.robot = r.i;
+      task.assignedAt = this.t;
+      task.preview = this.previewPath(task.pickup, task.drop);
+      r.task = task;
+      r.mode = 'toPickup';
+      this.emit('claim', ['Task ', { task: task.id }, ' assigned to ', { r: r.i }, ` (lowest bid, ${bid.toFixed(1)} s)`]);
+      this.fx.taskLinks.push({ robot: r.i, station: task.pickup, t0: this.t, dur: 1.8 });
+      this.startLeg(r);
+    }
+
+    startLeg(r) {
+      const goal = r.mode === 'toPickup' ? r.task.pickup : r.task.drop;
+      const plan = this.planFrom(r, goal, {});
+      if (!plan) { r.needRoute = true; return; }
+      r.needRoute = false;
+      const naive = this.planFrom(r, goal, { noIntent: true });
+      const stId = r.station;
+      this.holdEdge(r, Wd.edgeBetween(stId, plan.nodes[0]), plan.nodes[0]);
+      r.station = null;
+      r.legOdo = r.odo;
+      this.setRoute(r, plan, 0);
+      this.fx.rings.push({ kind: 'intent', x: r.x, y: r.y, t0: this.t, dur: 1.5, color: r.color });
+      if (naive && !sameNodes(naive.nodes, plan.nodes)) this.explainPlan(r, plan, naive);
+    }
+
+    /** A freshly planned route differs from the shortest one: say whose intent it avoided. */
+    explainPlan(r, plan, naive) {
+      const intents = this.collectIntents(r);
+      let prev = r.prev, t = 1.2, cause = null, causeEdge = null;
+      for (const n of naive.nodes) {
+        const e = Wd.edgeBetween(prev, n);
+        const tEnd = t + e.len / CFG.vMax;
+        for (const it of intents) {
+          if (it.eid === e.id && it.to !== n && t < it.tOut + 1.5 && it.tIn < tEnd + 1.5) { cause = it.robot; causeEdge = e.id; break; }
+        }
+        if (cause != null) break;
+        t = tEnd; prev = n;
+      }
+      if (cause == null) return;
+      const via = this.viaEdge(plan.nodes, naive.nodes, r.prev);
+      this.stats.negotiations++;
+      this.emit('negotiate', [{ r: r.i }, ' planned via ', { e: via }, ' to avoid ', { r: cause }, ' on ', { e: causeEdge }],
+        'plan|' + r.i, 3);
+      this.fxLink(cause, r.i, 'intent', 'Intent: ' + this.edgeName(causeEdge), 'Route via ' + this.edgeName(via), 2.6);
+    }
+
+    arrive(r) {
+      const goal = r.route.goal;
+      r.route = null;
+      r.arrived = false;
+      r.station = goal;
+      r.motion = 'parked';
+      r.v = 0;
+      r.timer = 0;
+      r.block = null;
+      r.mode = r.mode === 'toPickup' ? 'loading' : 'unloading';
+    }
+
+    finishTransfer(r) {
+      const task = r.task;
+      if (r.mode === 'loading') {
+        r.carrying = true;
+        task.state = 'picked';
+        task.pickedAt = this.t;
+        const st = this.stations[task.pickup];
+        st.obj = null;
+        st.res = null;
+        this.emit('pickup', [{ r: r.i }, ' picked up payload at ', { s: task.pickup }, ' (', { task: task.id }, ')']);
+        r.mode = 'toDrop';
+        this.startLeg(r);
+      } else {
+        r.carrying = false;
+        task.state = 'done';
+        task.doneAt = this.t;
+        const st = this.stations[task.drop];
+        st.obj = { state: 'delivered', t0: this.t, task: task.id };
+        st.res = null;
+        r.deliveries++;
+        this.stats.deliveries++;
+        this.emit('deliver', ['Task ', { task: task.id }, ' completed by ', { r: r.i }, ' at ', { s: task.drop },
+          ` in ${(this.t - task.assignedAt).toFixed(1)} s`]);
+        this.fx.rings.push({ kind: 'done', x: st.def.x, y: st.def.y, t0: this.t, dur: 1.4, color: '#4ade9b' });
+        this.tasks.splice(this.tasks.indexOf(task), 1);
+        r.task = null;
+        r.mode = 'idle';
+        r.timer = CFG.idleDelay;
+      }
+    }
+
+    // ------------------------------------------------------------------ planning
+    intentsOf(q, maxEdges) {
+      const out = [];
+      if (!q.route) return out;
+      const R = q.route;
+      let prev = q.prev, t = q.motion === 'rotate' ? 1.0 : 0, sPrev = q.s;
+      for (let k = R.idx; k < R.nodes.length && out.length < (maxEdges || 6); k++) {
+        const n = R.nodes[k];
+        const e = Wd.edgeBetween(prev, n);
+        const d = Math.max(0, R.nodeS[k] - sPrev) / (CFG.vMax * 0.85);
+        out.push({ robot: q.i, eid: e.id, from: prev, to: n, tIn: t, tOut: t + d, held: q.held.edges.has(e.id) });
+        t += d; sPrev = R.nodeS[k]; prev = n;
+      }
+      return out;
+    }
+    collectIntents(r) {
+      const all = [];
+      for (const q of this.robots) if (q !== r) all.push(...this.intentsOf(q, 6));
+      return all;
+    }
+
+    planCtx(r, opts) {
+      opts = opts || {};
+      const avoid = opts.avoid || null;
+      const intents = opts.noIntent || !r ? [] : this.collectIntents(r);
+      const heldEdges = r ? r.held.edges : new Set();
+      return {
+        edgeOK: (e) => {
+          if (avoid && avoid.has(e.id)) return false;
+          if (this.obstructions[e.id] && !heldEdges.has(e.id)) return false;
+          return true;
+        },
+        penalty: (from, to, e, tArr) => {
+          let p = 0;
+          const tEnd = tArr + e.len / CFG.vMax;
+          for (const it of intents) {
+            if (it.eid === e.id) {
+              if (it.to !== to) { if (tArr < it.tOut + 1.5 && it.tIn < tEnd + 1.5) p += it.held ? 6 : 2.6; }
+              else p += 0.15;
+            } else if (it.to === to && Math.abs(it.tOut - tEnd) < 1.2) p += 0.3;
+          }
+          return p;
+        },
+      };
+    }
+
+    dijkstra(starts, goal, ctx) {
+      const best = new Map();
+      const open = [];
+      for (const s of starts) {
+        const k = s.prev + '>' + s.node;
+        const ex = best.get(k);
+        if (ex && ex.cost <= s.cost) continue;
+        const st = { prev: s.prev, node: s.node, cost: s.cost, parent: null, root: s };
+        best.set(k, st);
+        open.push(st);
+      }
+      while (open.length) {
+        let bi = 0;
+        for (let i = 1; i < open.length; i++) if (open[i].cost < open[bi].cost) bi = i;
+        const cur = open[bi];
+        open[bi] = open[open.length - 1];
+        open.pop();
+        if (best.get(cur.prev + '>' + cur.node) !== cur) continue;
+        if (cur.node === goal) {
+          const tail = [];
+          let s = cur, rootS = null;
+          while (s) { if (!s.parent) rootS = s.root; else tail.push(s.node); s = s.parent; }
+          tail.reverse();
+          return { nodes: rootS.path.concat(tail), cost: cur.cost, reverse: !!rootS.reverse };
+        }
+        const N = Wd.nodeMap[cur.node];
+        for (const { to, e } of N.adj) {
+          if (to === cur.prev) continue;
+          if (Wd.nodeMap[to].kind === 'station' && to !== goal) continue;
+          if (!ctx.edgeOK(e)) continue;
+          const turn = turnCost(cur.prev, cur.node, to);
+          const c = cur.cost + turn + e.len / CFG.vMax + ctx.penalty(cur.node, to, e, cur.cost + turn * 0.5);
+          const k = cur.node + '>' + to;
+          const ex = best.get(k);
+          if (ex && ex.cost <= c) continue;
+          const st = { prev: cur.node, node: to, cost: c, parent: cur };
+          best.set(k, st);
+          open.push(st);
+        }
+      }
+      return null;
+    }
+
+    planFrom(r, goal, opts) {
+      opts = opts || {};
+      const ctx = this.planCtx(r, opts);
+      const starts = [];
+      if (!r.route || r.station) {
+        const stId = r.station || r.prev;
+        const n = Wd.nodeMap[stId];
+        const { to: j, e } = n.adj[0];
+        const J = Wd.nodeMap[j];
+        const rot = Math.abs(G.angDiff(Math.atan2(J.y - n.y, J.x - n.x), r.h)) / 1.8;
+        starts.push({ prev: stId, node: j, cost: rot + 0.4 + e.len / CFG.vMax, path: [j] });
+      } else {
+        const R = r.route;
+        if (R.idx >= R.nodes.length) return null;
+        const lastIdx = Math.min(R.nodes.length - 1, R.idx + R.granted);
+        const prefix = R.nodes.slice(R.idx, lastIdx + 1);
+        if (prefix[prefix.length - 1] === goal) return null;
+        const prevOfLast = prefix.length > 1 ? prefix[prefix.length - 2] : r.prev;
+        const rot = r.motion === 'rotate' ? 1.0 : 0;
+        starts.push({
+          prev: prevOfLast, node: prefix[prefix.length - 1],
+          cost: rot + Math.max(0, R.nodeS[lastIdx] - r.s) / CFG.vMax, path: prefix,
+        });
+        if (opts.allowReverse && this.canReverse(r)) {
+          const back = r.prev, P = Wd.nodeMap[back];
+          starts.push({
+            prev: R.nodes[R.idx], node: back, reverse: true, path: [back],
+            cost: 2.2 + Math.hypot(P.x - r.x, P.y - r.y) / CFG.vMax,
+          });
+        }
+      }
+      return this.dijkstra(starts, goal, ctx);
+    }
+
+    routeCost(r, ctx) {
+      const R = r.route;
+      if (!R) return Infinity;
+      let cost = r.motion === 'rotate' ? 1.0 : 0;
+      let prevPrev = null, prev = r.prev, sPrev = r.s;
+      const commitEnd = R.idx + R.granted;
+      for (let k = R.idx; k < R.nodes.length; k++) {
+        const n = R.nodes[k];
+        const e = Wd.edgeBetween(prev, n);
+        if (k <= commitEnd) cost += Math.max(0, R.nodeS[k] - sPrev) / CFG.vMax;
+        else {
+          if (!ctx.edgeOK(e)) return Infinity;
+          const turn = turnCost(prevPrev, prev, n);
+          cost += turn + e.len / CFG.vMax + ctx.penalty(prev, n, e, cost + turn * 0.5);
+        }
+        prevPrev = prev; prev = n; sPrev = R.nodeS[k];
+      }
+      return cost;
+    }
+
+    previewPath(from, to) {
+      const n = Wd.nodeMap[from];
+      const j = n.adj[0].to;
+      const plan = this.dijkstra([{ prev: from, node: j, cost: 0, path: [j] }], to, this.planCtx(null, { noIntent: true }));
+      return plan ? G.buildPath([n].concat(plan.nodes.map((id) => Wd.nodeMap[id])), CFG.fillet) : null;
+    }
+
+    setRoute(r, plan, granted) {
+      const pts = [{ x: r.x, y: r.y }].concat(plan.nodes.map((id) => Wd.nodeMap[id]));
+      const geo = G.buildPath(pts, CFG.fillet);
+      r.route = {
+        nodes: plan.nodes, geo, nodeS: geo.nodeS.slice(1), idx: 0, granted,
+        goal: plan.nodes[plan.nodes.length - 1], t0: this.t,
+      };
+      r.s = 0;
+      r.arrived = false;
+      const h0 = geo.headingAt(0);
+      const diff = G.angDiff(h0, r.h);
+      if (Math.abs(diff) > 0.05) { r.motion = 'rotate'; r.targetH = r.h + diff; r.w = 0; }
+      else { r.motion = 'drive'; r.h = h0; }
+    }
+
+    canReplan(r) {
+      const R = r.route;
+      if (!R || R.idx >= R.nodes.length) return false;
+      if (R.nodes[R.idx] === R.goal) return false;
+      if (r.motion === 'rotate') return r.s === 0;
+      const next = Wd.nodeMap[R.nodes[R.idx]], pv = Wd.nodeMap[r.prev];
+      if (Math.hypot(next.x - r.x, next.y - r.y) < 32) return false;
+      if (pv.kind !== 'station' && Math.hypot(pv.x - r.x, pv.y - r.y) < 32) return false;
+      return true;
+    }
+
+    canReverse(r) {
+      const R = r.route;
+      if (!R || R.granted > 0 || r.v > 6 || r.motion !== 'drive') return false;
+      const pv = Wd.nodeMap[r.prev];
+      if (!pv || pv.kind === 'station' || r.held.nodes.has(r.prev)) return false;
+      const e = Wd.edgeBetween(r.prev, R.nodes[R.idx]);
+      if (!e || e.kind === 'spur') return false;
+      const eh = this.edgeHold[e.id];
+      if (!eh || eh.set.size !== 1 || !eh.set.has(r.i)) return false;
+      return Math.hypot(pv.x - r.x, pv.y - r.y) >= CFG.stopDist + 2;
+    }
+
+    /** Try an alternative route. Returns the plan when adopted, otherwise null. */
+    replan(r, opts) {
+      if (!this.canReplan(r)) return null;
+      const R = r.route;
+      const plan = this.planFrom(r, R.goal, opts);
+      if (!plan) return null;
+      const cur = R.nodes.slice(R.idx);
+      if (!plan.reverse && sameNodes(plan.nodes, cur)) return null;
+      const curCost = this.routeCost(r, this.planCtx(r, {}));
+      let ok;
+      switch (opts.mode) {
+        case 'deadlock': ok = true; break;
+        case 'obstruction': ok = curCost === Infinity || plan.cost < curCost; break;
+        case 'intent': ok = plan.cost + 0.25 < curCost; break;
+        case 'congestion': ok = plan.cost < curCost + Math.min(4, 0.6 + (opts.waited || 0)); break;
+        case 'optimize': ok = plan.cost + 1.0 < curCost; break;
+        default: ok = plan.cost < curCost;
+      }
+      if (!ok) return null;
+      const ghost = this.remainingPolyline(r);
+      const oldPrev = r.prev;
+      if (plan.reverse) {
+        const e = Wd.edgeBetween(r.prev, R.nodes[R.idx]);
+        const eh = this.edgeHold[e.id];
+        if (eh) eh.to = r.prev;
+        r.prev = R.nodes[R.idx];
+      }
+      this.setRoute(r, plan, plan.reverse ? 0 : R.granted);
+      r.block = null;
+      r.waitAcc = 0;
+      r.lastReroute = this.t;
+      r.replanCD = 2.5;
+      plan.via = this.viaEdge(plan.nodes, cur, r.prev, oldPrev);
+      this.stats.reroutes++;
+      this.fx.ghosts.push({ robot: r.i, pts: ghost, t0: this.t, dur: 2.8, color: r.color });
+      return plan;
+    }
+
+    /** First corridor on the new route that the old route did not use. */
+    viaEdge(newNodes, oldNodes, newPrev, oldPrev) {
+      const set = new Set();
+      let p = oldPrev || newPrev;
+      for (const n of oldNodes) { const e = Wd.edgeBetween(p, n); if (e) set.add(e.id); p = n; }
+      p = newPrev;
+      let firstCorridor = null;
+      for (const n of newNodes) {
+        const e = Wd.edgeBetween(p, n);
+        p = n;
+        if (!e || e.kind === 'spur') continue;
+        if (!firstCorridor) firstCorridor = e.id;
+        if (!set.has(e.id)) return e.id;
+      }
+      return firstCorridor;
+    }
+
+    remainingPolyline(r) {
+      const geo = r.route.geo, out = [];
+      for (let k = geo.index(r.s); k < geo.n; k += 2) out.push(geo.xs[k], geo.ys[k]);
+      out.push(geo.xs[geo.n - 1], geo.ys[geo.n - 1]);
+      return out;
+    }
+
+    edgeName(eid) { const e = Wd.edgeMap[eid]; return e ? e.name : ''; }
+
+    shortEdge(eid) {
+      const e = Wd.edgeMap[eid];
+      if (!e) return '';
+      return e.kind === 'aisle' ? 'AISLE ' + e.label.slice(-1) + ' ' + e.sub : e.kind === 'cross' ? 'X-AISLE ' + e.label.slice(-1) + ' ' + e.sub : e.label;
+    }
+
+    applyReroute(r, p) {
+      const plan = this.replan(r, p);
+      if (!plan) return null;
+      const via = { e: plan.via };
+      let parts;
+      switch (p.mode) {
+        case 'obstruction':
+          parts = [{ r: r.i }, ' rerouted via ', via, ' (', { e: p.edge }, ' blocked)'];
+          r.rerouteText = 'Rerouted around blocked ' + Wd.edgeMap[p.edge].name;
+          break;
+        case 'congestion':
+          parts = [{ r: r.i }, ' rerouted via ', via, ' (congestion at ', { n: p.node }, ')'];
+          r.rerouteText = 'Rerouted via ' + Wd.edgeMap[plan.via].name + ' to avoid congestion at ' + p.node;
+          break;
+        case 'optimize':
+          parts = [{ r: r.i }, ' re-optimized route via ', via];
+          r.rerouteText = 'Shorter route via ' + Wd.edgeMap[plan.via].name;
+          break;
+        default:
+          parts = [{ r: r.i }, ' rerouted via ', via];
+          r.rerouteText = 'Rerouted via ' + Wd.edgeMap[plan.via].name;
+      }
+      this.emit('reroute', parts);
+      return plan;
+    }
+
+    // ------------------------------------------------------------------ coordination
+    prio(r) { return (r.carrying ? 10 : 0) + Math.min(r.waitAcc, 12) * 0.4 - r.i * 0.01; }
+
+    makeRequest(r) {
+      const R = r.route;
+      if (!R || r.motion !== 'drive' || (r.mode !== 'toPickup' && r.mode !== 'toDrop')) return null;
+      const gi = R.idx + R.granted;
+      if (gi >= R.nodes.length) return null;
+      const dist = R.nodeS[gi] - CFG.stopDist - r.s;
+      if (dist > CFG.reqRange) return null;
+      if (!this.isLead(r, gi)) return null;
+      const last = R.nodes.length - 1;
+      const n = R.nodes[gi];
+      const to = gi < last ? R.nodes[gi + 1] : null;
+      const e = to ? Wd.edgeBetween(n, to) : null;
+      const goalNode = gi + 1 === last ? to : null;
+      const eta = Math.max(0, dist) / Math.max(r.v, 35);
+      const score = (r.carrying ? 2.2 : 0) - eta + Math.min(r.waitAcc, 12) * 0.5 - r.i * 0.001;
+      return { r, gi, n, to, e, goalNode, dist, eta, score };
+    }
+
+    isLead(r, gi) {
+      const R = r.route;
+      const from = gi === R.idx ? r.prev : R.nodes[gi - 1];
+      const n = R.nodes[gi], N = Wd.nodeMap[n];
+      const myD = gi === R.idx ? Math.hypot(N.x - r.x, N.y - r.y) : Infinity;
+      for (const q of this.robots) {
+        if (q === r || !q.route) continue;
+        const Q = q.route;
+        if (Q.idx < Q.nodes.length && q.prev === from && Q.nodes[Q.idx] === n
+          && Math.hypot(N.x - q.x, N.y - q.y) < myD) return false;
+      }
+      return true;
+    }
+
+    tryGrant(q) {
+      const r = q.r;
+      const nh = this.nodeHolder[q.n];
+      if (nh !== undefined && nh !== r.i) return { kind: 'node', others: [nh], node: q.n };
+      if (q.e) {
+        if (this.obstructions[q.e.id] && !r.held.edges.has(q.e.id)) {
+          return { kind: 'obstruction', others: [], node: q.n, edge: q.e.id };
+        }
+        const eh = this.edgeHold[q.e.id];
+        if (eh && eh.set.size) {
+          const others = [...eh.set].filter((i) => i !== r.i);
+          if (others.length) {
+            if (eh.to !== q.to) return { kind: 'corridor', others, node: q.n, edge: q.e.id };
+            const N = Wd.nodeMap[q.n], T = Wd.nodeMap[q.to];
+            const ux = (T.x - N.x) / q.e.len, uy = (T.y - N.y) / q.e.len;
+            for (const i of others) {
+              const o = this.robots[i];
+              if ((o.x - N.x) * ux + (o.y - N.y) * uy < CFG.entryGap) {
+                return { kind: 'queue', others: [i], node: q.n, edge: q.e.id };
+              }
+            }
+          }
+        }
+      }
+      if (q.e) {
+        // Look through transit nodes (aisle junctions, corners): never enter a chain of
+        // single-track segments while another robot is already coming the other way along it.
+        const R = r.route;
+        let a = q.n, b = q.to;
+        for (let k = q.gi + 2; k < R.nodes.length && this.isTransit(b); k++) {
+          const c = R.nodes[k];
+          const e2 = Wd.edgeBetween(b, c);
+          const eh2 = this.edgeHold[e2.id];
+          if (eh2 && eh2.set.size && eh2.to === b) {
+            const others = [...eh2.set].filter((i) => i !== r.i && this.routeHasStep(this.robots[i], b, a));
+            if (others.length) return { kind: 'corridor', others, node: q.n, edge: e2.id };
+          }
+          a = b; b = c;
+        }
+      }
+      if (q.goalNode) {
+        const gh = this.nodeHolder[q.goalNode];
+        if (gh !== undefined && gh !== r.i) return { kind: 'station', others: [gh], node: q.goalNode };
+      }
+      return null;
+    }
+
+    isTransit(id) {
+      const n = Wd.nodeMap[id];
+      if (n.kind === 'station') return false;
+      let k = 0;
+      for (const a of n.adj) if (a.e.kind !== 'spur') k++;
+      return k === 2;
+    }
+
+    routeHasStep(q, from, to) {
+      const R = q.route;
+      if (!R) return false;
+      let prev = q.prev;
+      for (let k = R.idx; k < R.nodes.length; k++) {
+        if (prev === from && R.nodes[k] === to) return true;
+        prev = R.nodes[k];
+      }
+      return false;
+    }
+
+    arbitrate() {
+      for (const r of this.robots) if (r.block) r.block.fresh = false;
+      const reqs = [];
+      for (const r of this.robots) { const q = this.makeRequest(r); if (q) reqs.push(q); }
+      reqs.sort((a, b) => b.score - a.score);
+      for (const q of reqs) {
+        const res = this.tryGrant(q);
+        if (res) this.setBlock(q.r, res, q, reqs);
+        else this.grant(q);
+      }
+      for (const r of this.robots) if (r.block && !r.block.fresh) { r.block = null; r.waitAcc = 0; }
+    }
+
+    setBlock(r, res, q, reqs) {
+      const key = res.kind + '|' + res.others.join(',') + '|' + res.node + '|' + (res.edge || '');
+      if (!r.block || r.block.key !== key) {
+        const sameNode = r.block && r.block.node === res.node;
+        const contested = res.kind === 'node' && reqs.some((o) => o.r.i === res.others[0] && o.n === res.node);
+        r.block = Object.assign({}, res, {
+          key, since: sameNode ? r.block.since : this.t, logged: false,
+          reqEdge: q.e ? q.e.id : null, contested,
+        });
+      }
+      r.block.fresh = true;
+    }
+
+    grant(q) {
+      const r = q.r;
+      this.holdNode(r, q.n);
+      if (q.e) this.holdEdge(r, q.e, q.to);
+      let adv = 1;
+      if (q.goalNode) { this.holdNode(r, q.goalNode); adv = 2; }
+      r.route.granted += adv;
+      if (r.block) {
+        const b = r.block;
+        if (b.logged && !b.silent) {
+          this.stats.conflicts++;
+          this.fx.marks.push({ node: b.node, kind: 'resolved', t0: this.t, dur: 1.8 });
+          const waited = this.t - b.since;
+          if (waited > 1.8) {
+            this.emit('resolve', [{ r: r.i }, ' cleared to pass ', { n: b.node }, ` after ${waited.toFixed(1)} s`], 'res|' + r.i, 4);
+          }
+        }
+        r.block = null;
+        r.waitAcc = 0;
+      }
+    }
+
+    mustSlow(r) {
+      const R = r.route;
+      if (!R) return false;
+      const gi = R.idx + R.granted;
+      if (gi >= R.nodes.length) return false;
+      const d = R.nodeS[gi] - CFG.stopDist - r.s;
+      return d < (r.v * r.v) / (2 * CFG.decel) + 60;
+    }
+
+    yieldReason(r, W, node) {
+      const N = Wd.nodeMap[node];
+      if (Math.hypot(W.x - N.x, W.y - N.y) < 70) return 'is crossing';
+      if (W.carrying && !r.carrying) return 'has payload priority';
+      return 'arrives first';
+    }
+
+    logBlock(r) {
+      const b = r.block;
+      b.logged = true;
+      const W = b.others.length ? this.robots[b.others[0]] : null;
+      if (!W) { b.silent = true; return; }
+      if (b.kind === 'node') {
+        this.stats.yields++;
+        b.reason = this.yieldReason(r, W, b.node);
+        const why = b.reason === 'is crossing' ? 'intersection occupied' : b.reason === 'has payload priority' ? 'payload priority' : 'earlier arrival';
+        this.emit('conflict', ['Conflict at ', { n: b.node }, ': ', { r: r.i }, ' yields to ', { r: W.i }, ' (' + why + ')'],
+          'y|' + r.i + '|' + W.i + '|' + b.node, 8);
+        this.fxLink(W.i, r.i, 'yield', b.reason === 'has payload priority' ? 'Right of way (payload)' : 'Right of way', 'Yield at ' + b.node, 2.6);
+        this.fx.marks.push({ node: b.node, kind: 'conflict', t0: this.t, dur: 1.2 });
+      } else if (b.kind === 'corridor') {
+        this.stats.yields++;
+        b.reason = 'clearing';
+        const expected = r.expectHold && r.expectHold.eid === b.edge && this.t - r.expectHold.t < 12;
+        if (!expected) {
+          this.emit('conflict', ['Head-on conflict on ', { e: b.edge }, ': ', { r: r.i }, ' holds at ', { n: b.node }, ' for ', { r: W.i }],
+            'c|' + r.i + '|' + b.edge, 8);
+        }
+        this.fxLink(W.i, r.i, 'corridor', 'Occupying ' + this.edgeName(b.edge), 'Hold at ' + b.node, 2.6);
+        this.fx.edges.push({ eid: b.edge, t0: this.t, dur: 2.2 });
+      } else {
+        b.silent = true;
+      }
+    }
+
+    handleWaits(dt) {
+      for (const r of this.robots) {
+        const b = r.block;
+        if (!b) continue;
+        if (r.v < 20) r.waitAcc += dt;
+        const age = this.t - b.since;
+        if (b.kind === 'obstruction') {
+          if (r.replanCD <= 0) {
+            r.replanCD = 0.8;
+            this.applyReroute(r, { mode: 'obstruction', edge: b.edge, allowReverse: true });
+          }
+          continue;
+        }
+        if (!b.logged && age > 0.25 && this.mustSlow(r)) this.logBlock(r);
+        if (r.replanCD > 0 || r.v > 5) continue;
+        if ((b.kind === 'corridor' && age > 1.2) || (b.kind === 'node' && age > 4)) {
+          const avoid = this.edgesHeldByOthers(r);
+          avoid.add(b.reqEdge);
+          const plan = this.applyReroute(r, { mode: 'congestion', avoid, waited: age, node: b.node });
+          if (!plan) r.replanCD = 1.5;
+        }
+      }
+      this.detectDeadlocks();
+    }
+
+    edgesHeldByOthers(r) {
+      const out = new Set();
+      for (const eid in this.edgeHold) {
+        for (const i of this.edgeHold[eid].set) if (i !== r.i) { out.add(eid); break; }
+      }
+      return out;
+    }
+
+    detectDeadlocks() {
+      if (this.t < this.deadlockCD) return;
+      const deps = this.robots.map((r) => {
+        const s = new Set();
+        if (r.block && this.t - r.block.since > 0.5 && r.v < 3) r.block.others.forEach((o) => s.add(o));
+        if (r.follow >= 0 && r.v < 3) s.add(r.follow);
+        return s;
+      });
+      let cycle = null;
+      for (let a = 0; a < deps.length && !cycle; a++) {
+        for (const b of deps[a]) {
+          if (deps[b].has(a)) { cycle = [a, b]; break; }
+          for (const c of deps[b]) if (c !== a && deps[c].has(a)) { cycle = [a, b, c]; break; }
+          if (cycle) break;
+        }
+      }
+      if (!cycle) return;
+      this.deadlockCD = this.t + 1.0;
+      const cand = cycle.map((i) => this.robots[i]).sort((x, y) => this.prio(x) - this.prio(y));
+      for (const c of cand) {
+        // Only a genuinely free corridor (or backing off) can break the cycle.
+        const avoid = this.edgesHeldByOthers(c);
+        if (c.block && c.block.reqEdge) avoid.add(c.block.reqEdge);
+        const plan = this.replan(c, { mode: 'deadlock', avoid, allowReverse: true });
+        if (!plan) continue;
+        this.stats.deadlocks++;
+        const other = this.robots[cycle.find((i) => i !== c.i)];
+        this.emit('deadlock', ['Deadlock resolved: ', { r: c.i }, plan.reverse ? ' reversed and re-planned via ' : ' re-planned via ', { e: plan.via }, ', ', { r: other.i }, ' proceeds'],
+          'dl|' + c.i, 4);
+        this.fxLink(other.i, c.i, 'deadlock', 'Proceeding', plan.reverse ? 'Reversing' : 'Re-planning', 2.8);
+        c.rerouteText = plan.reverse ? 'Reversed to let ' + other.id + ' pass' : 'Re-planned to clear a deadlock';
+        this.deadlockCD = this.t + 0.8;
+        return;
+      }
+    }
+
+    /** Pairwise check of broadcast intents for head-on corridor conflicts. */
+    intentCheck() {
+      for (const r of this.robots) {
+        if (r.route && !r.pendingReplan && r.replanCD <= 0 && this.routeCost(r, this.planCtx(r, { noIntent: true })) === Infinity) {
+          const eid = this.firstBlockedEdge(r);
+          if (!this.applyReroute(r, { mode: 'obstruction', edge: eid, allowReverse: true })) r.replanCD = 0.8;
+        }
+      }
+      const I = this.robots.map((r) => this.intentsOf(r, 5));
+      for (let a = 0; a < I.length; a++) {
+        for (let b = a + 1; b < I.length; b++) {
+          let found = null;
+          for (const ia of I[a]) {
+            for (const ib of I[b]) {
+              if (ia.eid !== ib.eid || ia.to === ib.to || (ia.held && ib.held)) continue;
+              if (ia.tIn < ib.tOut + 1.5 && ib.tIn < ia.tOut + 1.5) { found = [ia, ib]; break; }
+            }
+            if (found) break;
+          }
+          if (!found) continue;
+          const key = a + '|' + b + '|' + found[0].eid;
+          if (this.negotiated[key] != null && this.t - this.negotiated[key] < 10) continue;
+          if (this.negotiateCorridor(this.robots[a], this.robots[b], found[0], found[1])) this.negotiated[key] = this.t;
+        }
+      }
+    }
+
+    firstBlockedEdge(r) {
+      const R = r.route;
+      let prev = r.prev;
+      for (let k = R.idx; k < R.nodes.length; k++) {
+        const e = Wd.edgeBetween(prev, R.nodes[k]);
+        if (this.obstructions[e.id] && !r.held.edges.has(e.id)) return e.id;
+        prev = R.nodes[k];
+      }
+      return null;
+    }
+
+    negotiateCorridor(A, B, ia, ib) {
+      const aFirst = ia.held || (!ib.held && ia.tIn <= ib.tIn);
+      const first = aFirst ? A : B, second = aFirst ? B : A;
+      const secondI = aFirst ? ib : ia;
+      if (secondI.held || !this.canReplan(second)) return false;
+      const eid = ia.eid;
+      const plan = this.replan(second, { mode: 'intent', avoid: new Set([eid]) });
+      this.stats.negotiations++;
+      if (plan) {
+        second.rerouteText = 'Diverted via ' + Wd.edgeMap[plan.via].name + ' after negotiating with ' + first.id;
+        this.emit('negotiate', [{ r: second.i }, ' and ', { r: first.i }, ' negotiated ', { e: eid }, ': ', { r: second.i }, ' diverts via ', { e: plan.via }]);
+        this.fxLink(first.i, second.i, 'intent', 'Intent: ' + this.edgeName(eid), 'Divert via ' + this.edgeName(plan.via), 2.6);
+      } else {
+        second.expectHold = { eid, t: this.t, other: first.i };
+        this.emit('negotiate', [{ r: second.i }, ' and ', { r: first.i }, ' negotiated ', { e: eid }, ': ', { r: first.i }, ' has right of way'],
+          'neg|' + second.i + '|' + eid, 10);
+        this.fxLink(first.i, second.i, 'intent', 'Intent: ' + this.edgeName(eid), 'Acknowledged, will hold', 2.6);
+      }
+      return true;
+    }
+
+    // ------------------------------------------------------------------ motion
+    move(r, dt) {
+      r.follow = -1;
+      if (r.motion === 'rotate') {
+        const diff = G.angDiff(r.targetH, r.h);
+        const wLim = Math.min(CFG.omegaMax, Math.sqrt(2 * CFG.alpha * Math.abs(diff)));
+        r.w += clamp(Math.sign(diff) * wLim - r.w, -CFG.alpha * dt, CFG.alpha * dt);
+        const step = r.w * dt;
+        if (Math.abs(diff) < 0.004 || (Math.sign(step) === Math.sign(diff) && Math.abs(step) >= Math.abs(diff))) {
+          r.h = r.targetH; r.w = 0; r.motion = 'drive';
+        } else r.h += step;
+        r.v = 0;
+        return;
+      }
+      if (r.motion !== 'drive' || !r.route) { r.v = 0; return; }
+      const R = r.route, geo = R.geo;
+      let stopS = geo.length;
+      const gi = R.idx + R.granted;
+      if (gi < R.nodes.length) stopS = Math.min(stopS, R.nodeS[gi] - CFG.stopDist);
+      const sf = this.safetyStop(r, stopS);
+      if (sf && sf.s < stopS) { stopS = sf.s; r.follow = sf.q; }
+      const d = stopS - r.s;
+      let vLim = Math.min(CFG.vMax, Math.sqrt(2 * CFG.decel * Math.max(0, d)));
+      for (const c of geo.corners) {
+        if (c.s1 < r.s) continue;
+        if (c.s0 > r.s + 160) break;
+        const vc = Math.sqrt(CFG.latAcc * c.r);
+        vLim = Math.min(vLim, r.s >= c.s0 ? vc : Math.sqrt(vc * vc + 2 * CFG.decel * (c.s0 - r.s)));
+      }
+      if (R.idx >= R.nodes.length - 1) vLim = Math.min(vLim, CFG.dockSpeed + (geo.length - r.s) * 0.9);
+      if (r.v < vLim) r.v = Math.min(vLim, r.v + CFG.accel * dt);
+      else r.v = Math.max(vLim, r.v - CFG.hardDecel * dt);
+      let ds = r.v * dt;
+      if (r.s + ds >= stopS) { ds = Math.max(0, stopS - r.s); if (d < 0.6) r.v = 0; }
+      r.s += ds;
+      r.odo += ds;
+      geo.at(r.s, tmp);
+      r.x = tmp.x; r.y = tmp.y; r.h = tmp.h;
+      if (gi >= R.nodes.length && r.s >= geo.length - 0.05 && r.v < 1) { r.s = geo.length; r.v = 0; r.arrived = true; }
+    }
+
+    safetyStop(r, limitS) {
+      const geo = r.route.geo;
+      const look = Math.min(limitS, r.s + (r.v * r.v) / (2 * CFG.decel) + 70);
+      if (look <= r.s) return null;
+      let best = null;
+      const k0 = geo.index(r.s) + 1;
+      for (const q of this.robots) {
+        if (q === r) continue;
+        const d0 = Math.hypot(q.x - r.x, q.y - r.y);
+        if (d0 > look - r.s + CFG.safeDist) continue;
+        for (let k = k0; k < geo.n && geo.cs[k] <= look; k++) {
+          const dq = Math.hypot(geo.xs[k] - q.x, geo.ys[k] - q.y);
+          if (dq < CFG.safeDist && dq < d0 - 0.05) {
+            const s = Math.max(r.s, geo.cs[k - 1]);
+            if (!best || s < best.s) best = { s, q: q.i };
+            break;
+          }
+        }
+      }
+      return best;
+    }
+
+    progress(r) {
+      const R = r.route;
+      if (R) {
+        while (R.idx < R.nodes.length && r.s >= R.nodeS[R.idx] - 0.01) {
+          const n = R.nodes[R.idx];
+          const e = Wd.edgeBetween(r.prev, n);
+          if (e) this.releaseEdge(r, e.id);
+          r.prev = n;
+          R.idx++;
+          R.granted = Math.max(0, R.granted - 1);
+        }
+      }
+      // A node lock is kept only while the node lies in the granted window ahead, or while
+      // the robot is still physically inside its clearance radius (passing through or docked).
+      for (const n of [...r.held.nodes]) {
+        if (R) {
+          const k = R.nodes.indexOf(n, R.idx);
+          if (k >= 0 && k < R.idx + R.granted) continue;
+        }
+        const N = Wd.nodeMap[n];
+        if (Math.hypot(N.x - r.x, N.y - r.y) >= CFG.releaseDist) this.releaseNode(r, n);
+      }
+    }
+
+    checkSafety() {
+      const rs = this.robots;
+      for (let a = 0; a < rs.length; a++) {
+        for (let b = a + 1; b < rs.length; b++) {
+          const d = Math.hypot(rs[a].x - rs[b].x, rs[a].y - rs[b].y);
+          if (d < this.stats.minSep) this.stats.minSep = d;
+          const key = a + '-' + b;
+          if (d < 60 && obbOverlap(rs[a], rs[b])) {
+            if (!this.contacts.has(key)) {
+              this.contacts.add(key);
+              this.stats.collisions++;
+              this.emit('alert', ['Collision detected: ', { r: a }, ' and ', { r: b }]);
+            }
+          } else this.contacts.delete(key);
+        }
+      }
+    }
+
+    updateFx() {
+      const t = this.t;
+      for (const k in this.fx) {
+        const arr = this.fx[k];
+        let w = 0;
+        for (let i = 0; i < arr.length; i++) if (t - arr[i].t0 < arr[i].dur) arr[w++] = arr[i];
+        arr.length = w;
+      }
+    }
+
+    // ------------------------------------------------------------------ obstructions
+    updateObstructions() {
+      for (const id in this.obstructions) {
+        const o = this.obstructions[id];
+        if (o.state === 'closing' && !this.edgeHeld(id)) { o.state = 'closed'; o.t0 = this.t; o.until = this.t + o.dur; }
+        if (o.state === 'closed' && this.t >= o.until) this.clearObstruction(id, 'expired');
+      }
+      if (this.autoObstructions && this.t >= this.nextObsT) {
+        this.nextObsT = this.t + 40 + this.rand() * 20;
+        if (!Object.values(this.obstructions).some((o) => o.source === 'auto')) this.spawnAutoObstruction();
+      }
+    }
+
+    spawnAutoObstruction(source) {
+      // Prefer a corridor some robot is about to use, so the fleet visibly adapts.
+      const onRoute = [];
+      for (const r of this.robots) {
+        const R = r.route;
+        if (!R) continue;
+        for (let k = R.idx + R.granted + 2; k < R.nodes.length; k++) {
+          const e = Wd.edgeBetween(R.nodes[k - 1], R.nodes[k]);
+          if (e.kind !== 'spur' && !this.edgeHeld(e.id) && !this.obstructions[e.id]) onRoute.push(e);
+        }
+      }
+      const pool = Wd.edges.filter((x) => x.kind !== 'spur' && !this.edgeHeld(x.id) && !this.obstructions[x.id]);
+      const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(this.rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+      for (const e of shuffle(onRoute).concat(shuffle(pool))) {
+        const src = source || 'auto';
+        if (this.placeObstruction(e.id, src, src === 'user' ? 25 : 16 + this.rand() * 8).ok) return;
+      }
+    }
+
+    /** Would closing this corridor cut a station off, or trap a robot already committed to it? */
+    obstructionProblem(eid) {
+      const closed = new Set(Object.keys(this.obstructions));
+      closed.add(eid);
+      const seen = new Set([Wd.stations[0].id]);
+      const stack = [Wd.stations[0].id];
+      while (stack.length) {
+        const id = stack.pop();
+        for (const { to, e } of Wd.nodeMap[id].adj) {
+          if (closed.has(e.id) || seen.has(to)) continue;
+          seen.add(to);
+          stack.push(to);
+        }
+      }
+      const cut = Wd.stations.find((s) => !seen.has(s.id));
+      if (cut) return `Closing it would cut off ${cut.id}`;
+      const avoid = new Set([eid]);
+      for (const r of this.robots) {
+        const R = r.route;
+        if (!R || !this.routeHasEdgeAfterCommit(r, eid)) continue;
+        if (!this.planFrom(r, R.goal, { avoid, noIntent: true })) return `${r.id} would be trapped`;
+      }
+      return null;
+    }
+
+    routeHasEdgeAfterCommit(r, eid) {
+      const R = r.route;
+      for (let k = R.idx + R.granted + 1; k < R.nodes.length; k++) {
+        if (Wd.edgeBetween(R.nodes[k - 1], R.nodes[k]).id === eid) return true;
+      }
+      return false;
+    }
+
+    placeObstruction(eid, source, dur) {
+      const e = Wd.edgeMap[eid];
+      if (!e || e.kind === 'spur') return { ok: false, msg: 'Dock lanes stay open' };
+      if (this.obstructions[eid]) return { ok: false, msg: 'Already blocked' };
+      if (Object.keys(this.obstructions).length >= 3) return { ok: false, msg: 'Up to 3 corridors can be closed at once' };
+      const problem = this.obstructionProblem(eid);
+      if (problem) return { ok: false, msg: problem + ' · pick another corridor' };
+      const held = this.edgeHeld(eid);
+      const reason = OBSTACLE_REASONS[Math.floor(this.rand() * OBSTACLE_REASONS.length)];
+      this.obstructions[eid] = {
+        eid, source, reason, dur, state: held ? 'closing' : 'closed', t0: this.t, until: this.t + dur,
+      };
+      this.emit('block', ['Segment ', { e: eid }, ' blocked (' + (source === 'user' ? 'operator' : reason) + ')',
+        held ? ', closes after current traffic clears' : '']);
+      for (const r of this.robots) {
+        const R = r.route;
+        if (!R) continue;
+        for (let k = R.idx + R.granted + 1; k < R.nodes.length; k++) {
+          if (Wd.edgeBetween(R.nodes[k - 1], R.nodes[k]).id === eid) {
+            r.pendingReplan = { mode: 'obstruction', edge: eid, allowReverse: true };
+            break;
+          }
+        }
+      }
+      return { ok: true };
+    }
+
+    clearObstruction(eid, why) {
+      if (!this.obstructions[eid]) return;
+      delete this.obstructions[eid];
+      this.emit('clear', ['Segment ', { e: eid }, why === 'user' ? ' reopened by operator' : ' reopened']);
+      for (const r of this.robots) {
+        if (r.route && r.replanCD <= 0 && this.canReplan(r)) this.applyReroute(r, { mode: 'optimize' });
+      }
+    }
+
+    toggleObstruction(eid) {
+      if (this.obstructions[eid]) { this.clearObstruction(eid, 'user'); return { ok: true, cleared: true }; }
+      return this.placeObstruction(eid, 'user', 25);
+    }
+
+    // ------------------------------------------------------------------ read-outs for the UI
+    status(r) {
+      const id = (i) => this.robots[i].id;
+      if (r.mode === 'idle') return { key: 'idle', label: 'Idle', tone: 'idle', text: `Parked at ${r.station}, awaiting task` };
+      if (r.mode === 'loading') return { key: 'work', label: 'Loading', tone: 'work', text: `Receiving payload at ${r.station}` };
+      if (r.mode === 'unloading') return { key: 'work', label: 'Unloading', tone: 'work', text: `Handing off payload at ${r.station}` };
+      const b = r.block;
+      if (b && b.kind === 'obstruction') return { key: 'replan', label: 'Replanning', tone: 'wait', text: `${Wd.edgeMap[b.edge].name} blocked, computing new route` };
+      if (b && b.logged && b.kind === 'node') {
+        const why = b.reason === 'has payload priority' ? 'payload priority' : b.reason === 'is crossing' ? 'intersection occupied' : 'earlier arrival';
+        return { key: 'yield', label: 'Yielding', tone: 'wait', text: `Holding at ${b.node}, ${id(b.others[0])} has right of way (${why})` };
+      }
+      if (b && b.logged && b.kind === 'corridor') {
+        return { key: 'yield', label: 'Holding', tone: 'wait', text: `Holding at ${b.node}, ${id(b.others[0])} occupying ${Wd.edgeMap[b.edge].name}` };
+      }
+      if (b && b.kind === 'queue' && r.v < 10) return { key: 'queue', label: 'Queued', tone: 'wait', text: `Queued behind ${id(b.others[0])} for ${Wd.edgeMap[b.edge].name}` };
+      if (r.needRoute) return { key: 'blocked', label: 'No route', tone: 'fault', text: 'All routes to goal blocked' };
+      if (this.t - r.lastReroute < 3.2 && r.rerouteText) return { key: 'reroute', label: 'Rerouted', tone: 'drive', text: r.rerouteText };
+      if (r.follow >= 0) return { key: 'follow', label: 'Following', tone: 'drive', text: `Keeping safe gap to ${id(r.follow)}` };
+      if (r.motion === 'rotate') return { key: 'turn', label: 'Turning', tone: 'drive', text: 'Rotating in place to route heading' };
+      return {
+        key: 'move', label: r.mode === 'toPickup' ? 'To pickup' : 'In transit', tone: 'drive',
+        text: 'Via ' + this.viaText(r),
+      };
+    }
+
+    viaText(r) {
+      const R = r.route;
+      if (!R) return '';
+      const names = [];
+      let prev = r.prev;
+      for (let k = R.idx; k < R.nodes.length && names.length < 2; k++) {
+        const e = Wd.edgeBetween(prev, R.nodes[k]);
+        prev = R.nodes[k];
+        if (!e || e.kind === 'spur') continue;
+        if (names[names.length - 1] !== e.label) names.push(e.label);
+      }
+      return names.length ? names.join(' → ') : 'dock lane';
+    }
+
+    legProgress(r) {
+      if (!r.task) return 0;
+      if (!r.route) return r.mode === 'loading' || r.mode === 'unloading' ? 1 : 0;
+      const done = r.odo - r.legOdo, rem = Math.max(0, r.route.geo.length - r.s);
+      return done + rem > 0 ? done / (done + rem) : 0;
+    }
+  }
+
+  WH.Sim = Sim;
+  WH.SIM_CFG = CFG;
+  WH.obbOverlap = obbOverlap;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+/*
+ * render.js — floor map renderer for the EdgeFleet console.
+ *
+ * Drawn as a facility map, the way fleet-management software shows a site: flat surfaces,
+ * building column grid, rack slots, the path network and its nodes, traffic zones.
+ * The static layer is cached and re-rendered only when the view (zoom/pan/size) settles.
+ */
+(function (root) {
+  'use strict';
+  const WH = (root.WH = root.WH || {});
+  const Wd = WH.world;
+
+  const FONT = {
+    sans: '"IBM Plex Sans", "Segoe UI", system-ui, sans-serif',
+    mono: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
+  };
+  const C = {
+    bg: '#141619',
+    floor: '#191c1f',
+    lane: '#22262b',
+    grid: '#2a2f35',
+    gridText: '#7f8791',
+    wall: '#2f343a',
+    wallEdge: '#4b525a',
+    rack: '#24282d',
+    rackEdge: '#3a4047',
+    slot: '#2d3238',
+    slotEdge: '#383e45',
+    beam: '#4d545c',
+    net: '#353c44',
+    node: '#6a737d',
+    zone: '#3a414a',
+    label: '#6b737d',
+    labelHi: '#8d959f',
+    text: '#e1e4e8',
+    text2: '#a0a7b0',
+    tagBg: 'rgba(15,17,19,0.92)',
+    tagEdge: '#3a4047',
+    ok: '#3ea86b',
+    warn: '#e3a42b',
+    alarm: '#e5534b',
+    work: '#5b9cf5',
+    idle: '#8a919b',
+    payload: '#a88353',
+  };
+  const TONE = { drive: C.ok, wait: C.warn, work: C.work, idle: C.idle, fault: C.alarm };
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  const rgbaCache = new Map();
+  function rgba(hex, a) {
+    let c = rgbaCache.get(hex);
+    if (!c) {
+      c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',');
+      rgbaCache.set(hex, c);
+    }
+    return `rgba(${c},${a})`;
+  }
+  function rr(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Building column grid (structural bays) and view bounds come with the layout
+  const GRID_X = Wd.grid.xs, GRID_Y = Wd.grid.ys;
+  const BOUNDS = Wd.bounds;
+
+  class Renderer {
+    constructor(canvas, sim) {
+      this.cv = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.sim = sim;
+      this.stat = document.createElement('canvas');
+      this.layers = { paths: true, reservations: true, comms: true, safety: false, labels: true };
+      this.tool = 'select';
+      this.selected = -1;
+      this.hover = null;
+      this.k = 1;
+      this.cx = (BOUNDS.x0 + BOUNDS.x1) / 2;
+      this.cy = (BOUNDS.y0 + BOUNDS.y1) / 2;
+      this.statView = null;
+      this.viewChangedAt = 0;
+      this.tmp = { x: 0, y: 0, h: 0 };
+      this.resize();
+    }
+
+    // ------------------------------------------------------------------ view
+    resize() {
+      const box = this.cv.parentElement.getBoundingClientRect();
+      this.dpr = Math.min(2, root.devicePixelRatio || 1);
+      this.cw = Math.max(200, box.width);
+      this.ch = Math.max(150, box.height);
+      this.cv.width = Math.round(this.cw * this.dpr);
+      this.cv.height = Math.round(this.ch * this.dpr);
+      this.cv.style.width = this.cw + 'px';
+      this.cv.style.height = this.ch + 'px';
+      this.stat.width = this.cv.width;
+      this.stat.height = this.cv.height;
+      const pad = this.cw < 700 ? 4 : 10;
+      this.fitScale = Math.min((this.cw - pad * 2) / (BOUNDS.x1 - BOUNDS.x0), (this.ch - pad * 2) / (BOUNDS.y1 - BOUNDS.y0));
+      this.clampView();
+      this.applyView();
+      this.drawStatic();
+      if (this.ready) this.draw();
+      this.ready = true;
+    }
+    applyView() {
+      this.scale = this.fitScale * this.k;
+      this.ox = this.cw / 2 - this.cx * this.scale;
+      this.oy = this.ch / 2 - this.cy * this.scale;
+      this.compact = this.scale < 0.45;
+    }
+    clampView() {
+      const s = this.fitScale * this.k;
+      const hw = this.cw / 2 / s, hh = this.ch / 2 / s;
+      const mx = (BOUNDS.x0 + BOUNDS.x1) / 2, my = (BOUNDS.y0 + BOUNDS.y1) / 2;
+      this.cx = hw * 2 >= BOUNDS.x1 - BOUNDS.x0 ? mx : clamp(this.cx, BOUNDS.x0 + hw, BOUNDS.x1 - hw);
+      this.cy = hh * 2 >= BOUNDS.y1 - BOUNDS.y0 ? my : clamp(this.cy, BOUNDS.y0 + hh, BOUNDS.y1 - hh);
+    }
+    viewChanged() { this.clampView(); this.applyView(); this.viewChangedAt = performance.now(); }
+    zoomAt(px, py, factor) {
+      const w = this.toWorld(px, py);
+      const k = clamp(this.k * factor, 1, 6);
+      if (Math.abs(k - this.k) < 1e-6) return;
+      this.k = k;
+      const s = this.fitScale * k;
+      this.cx = w.x - (px - this.cw / 2) / s;
+      this.cy = w.y - (py - this.ch / 2) / s;
+      this.viewChanged();
+    }
+    zoomBy(factor) { this.zoomAt(this.cw / 2, this.ch / 2, factor); }
+    panBy(dx, dy) {
+      this.cx -= dx / this.scale;
+      this.cy -= dy / this.scale;
+      this.viewChanged();
+    }
+    fit() {
+      this.k = 1;
+      this.cx = (BOUNDS.x0 + BOUNDS.x1) / 2;
+      this.cy = (BOUNDS.y0 + BOUNDS.y1) / 2;
+      this.viewChanged();
+    }
+    viewKey() { return `${this.scale.toFixed(5)}|${this.ox.toFixed(2)}|${this.oy.toFixed(2)}|${this.cv.width}x${this.cv.height}|${this.layers.labels}`; }
+
+    px(n) { return n / this.scale; }
+    sx(x) { return this.ox + x * this.scale; }
+    sy(y) { return this.oy + y * this.scale; }
+    toWorld(px, py) { return { x: (px - this.ox) / this.scale, y: (py - this.oy) / this.scale }; }
+    setWorld(ctx) {
+      const k = this.dpr * this.scale;
+      ctx.setTransform(k, 0, 0, k, this.dpr * this.ox, this.dpr * this.oy);
+    }
+    setScreen(ctx) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); }
+    fs(base) { return Math.round(clamp(base * Math.pow(this.scale / 0.9, 0.35), base * 0.85, base * 1.25)); }
+
+    // ------------------------------------------------------------------ static layer
+    drawStatic() {
+      const ctx = this.stat.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, this.stat.width, this.stat.height);
+      this.setWorld(ctx);
+      this.drawFloor(ctx);
+      this.drawAreas(ctx, false);
+      this.drawLanes(ctx);
+      const rng = mulberry32(20240517);
+      Wd.racks.forEach((rk) => this.drawRack(ctx, rk, rng));
+      this.drawBays(ctx);
+      for (const st of Wd.stations) this.drawStationBase(ctx, st);
+      this.drawNetwork(ctx);
+      this.drawAreas(ctx, true);
+      this.drawWalls(ctx);
+      this.setScreen(ctx);
+      this.drawStaticLabels(ctx);
+      this.statView = { key: this.viewKey(), scale: this.scale, ox: this.ox, oy: this.oy };
+    }
+
+    drawFloor(ctx) {
+      const { x0, y0, x1, y1 } = Wd.WALL;
+      ctx.fillStyle = C.floor;
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.strokeStyle = C.grid;
+      ctx.lineWidth = this.px(1);
+      ctx.setLineDash([22, 5, 3, 5]);
+      for (const x of GRID_X) { ctx.beginPath(); ctx.moveTo(x, -8); ctx.lineTo(x, y1); ctx.stroke(); }
+      for (const y of GRID_Y) { ctx.beginPath(); ctx.moveTo(-8, y); ctx.lineTo(x1, y); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
+
+    // Storage and process areas. Overhead equipment is drawn after the path network.
+    drawAreas(ctx, overheadPass) {
+      const rng = mulberry32(99);
+      for (const a of Wd.areas) {
+        if (!!(a.kind === 'conveyor' && a.overhead) !== overheadPass) continue;
+        const w = (a.x1 || 0) - (a.x0 || 0), h = (a.y1 || 0) - (a.y0 || 0);
+        ctx.lineWidth = this.px(1);
+        if (a.kind !== 'conveyor' && a.kind !== 'cube') {
+          ctx.setLineDash([6, 4]);
+          ctx.strokeStyle = C.zone;
+          ctx.strokeRect(a.x0, a.y0, w, h);
+          ctx.setLineDash([]);
+        }
+        if (a.kind === 'staging') {
+          const cols = Math.max(1, Math.floor((w - 16) / 58));
+          const sw = 48, sh = 40, gx = (w - cols * sw) / (cols + 1);
+          for (let c = 0; c < cols; c++) {
+            for (let r = 0; r < 2; r++) {
+              const x = a.x0 + gx + c * (sw + gx), y = a.y0 + 8 + r * (sh + 8);
+              if (y + sh > a.y1 - 4) continue;
+              this.slot(ctx, x, y, sw, sh, rng() < 0.55);
+            }
+          }
+        } else if (a.kind === 'pallets') {
+          const cw = (w - 12) / a.cols, ch = (h - 12) / a.rows;
+          const s = Math.min(cw, ch) - 8;
+          for (let c = 0; c < a.cols; c++) {
+            for (let r = 0; r < a.rows; r++) {
+              this.slot(ctx, a.x0 + 6 + c * cw + (cw - s) / 2, a.y0 + 6 + r * ch + (ch - s) / 2, s, s, rng() < 0.78);
+            }
+          }
+        } else if (a.kind === 'totes') {
+          const n = Math.floor((w - 12) / 22);
+          const gx = (w - n * 22) / 2 + 4;
+          for (const y of [a.y0 + 18, a.y1 - 32]) {
+            for (let i = 0; i < n; i++) this.slot(ctx, a.x0 + gx + i * 22, y, 14, 14, rng() < 0.7);
+          }
+        } else if (a.kind === 'carts') {
+          const n = Math.floor((w - 16) / 30), rows = Math.floor((h - 12) / 46);
+          for (let r = 0; r < rows; r++) {
+            for (let i = 0; i < n; i++) {
+              if (rng() < 0.25) continue;
+              const x = a.x0 + 12 + i * 30, y = a.y0 + 10 + r * 46;
+              ctx.fillStyle = '#23272b';
+              ctx.fillRect(x, y, 20, 32);
+              ctx.strokeStyle = C.slotEdge;
+              ctx.strokeRect(x, y, 20, 32);
+              ctx.beginPath(); ctx.moveTo(x + 3, y + 36); ctx.lineTo(x + 17, y + 36); ctx.stroke();
+            }
+          }
+        } else if (a.kind === 'cube') {
+          ctx.fillStyle = '#1f2327';
+          ctx.fillRect(a.x0, a.y0, w, h);
+          ctx.strokeStyle = '#2b3036';
+          ctx.beginPath();
+          for (let x = a.x0 + 13; x < a.x1; x += 13) { ctx.moveTo(x, a.y0); ctx.lineTo(x, a.y1); }
+          for (let y = a.y0 + 13; y < a.y1; y += 13) { ctx.moveTo(a.x0, y); ctx.lineTo(a.x1, y); }
+          ctx.stroke();
+          ctx.fillStyle = '#343a41';
+          for (let k = 0; k < 7; k++) {
+            const cx = a.x0 + 13 * Math.floor(rng() * (w / 13)), cy = a.y0 + 13 * Math.floor(rng() * (h / 13));
+            ctx.fillRect(cx + 2, cy + 2, 9, 9);
+          }
+          ctx.strokeStyle = C.rackEdge;
+          ctx.strokeRect(a.x0, a.y0, w, h);
+        } else if (a.kind === 'cell') {
+          const cx = (a.x0 + a.x1) / 2;
+          ctx.fillStyle = '#262a2f';
+          ctx.fillRect(a.x0 + 12, a.y1 - 48, w - 24, 26);
+          ctx.strokeStyle = '#454c55';
+          ctx.strokeRect(a.x0 + 12, a.y1 - 48, w - 24, 26);
+          ctx.fillStyle = '#23272b';
+          ctx.beginPath(); ctx.arc(cx, a.y0 + 36, 11, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = C.node;
+          ctx.lineWidth = this.px(1.2);
+          ctx.stroke();
+          ctx.strokeStyle = '#5a626b';
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(cx, a.y0 + 36); ctx.lineTo(cx + 20, a.y0 + 52); ctx.lineTo(cx + 12, a.y0 + 70); ctx.stroke();
+          ctx.lineCap = 'butt';
+          ctx.fillStyle = '#2d3238';
+          ctx.fillRect(cx - 34, a.y0 + 14, 16, 22);
+          ctx.fillRect(cx + 20, a.y0 + 14, 16, 22);
+        } else if (a.kind === 'conveyor') {
+          const trace = () => {
+            ctx.beginPath();
+            a.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          };
+          ctx.lineJoin = 'miter';
+          trace();
+          ctx.strokeStyle = a.overhead ? 'rgba(90,98,107,0.9)' : '#4b525a';
+          ctx.lineWidth = 16;
+          if (a.overhead) ctx.setLineDash([10, 5]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          trace();
+          ctx.strokeStyle = a.overhead ? 'rgba(27,30,34,0.92)' : '#23272c';
+          ctx.lineWidth = 13;
+          ctx.stroke();
+          trace();
+          ctx.setLineDash([1.4, 6.6]);
+          ctx.strokeStyle = '#3d434b';
+          ctx.lineWidth = 11;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.lineJoin = 'round';
+        }
+      }
+    }
+
+    slot(ctx, x, y, w, h, used) {
+      if (used) { ctx.fillStyle = C.slot; ctx.fillRect(x, y, w, h); }
+      ctx.strokeStyle = used ? C.slotEdge : C.grid;
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(x, y, w, h);
+    }
+
+    laneRect(ctx, e, inset, trim) {
+      const A = Wd.nodeMap[e.a], B = Wd.nodeMap[e.b];
+      const len = e.len, ux = (B.x - A.x) / len, uy = (B.y - A.y) / len;
+      const half = (e.kind === 'spur' ? 32 : Wd.HALF) - inset;
+      const t0 = trim && A.kind !== 'station' ? trim : 0;
+      const t1 = trim && B.kind !== 'station' ? len - trim : len;
+      const nx = -uy, ny = ux;
+      ctx.beginPath();
+      ctx.moveTo(A.x + ux * t0 + nx * half, A.y + uy * t0 + ny * half);
+      ctx.lineTo(A.x + ux * t1 + nx * half, A.y + uy * t1 + ny * half);
+      ctx.lineTo(A.x + ux * t1 - nx * half, A.y + uy * t1 - ny * half);
+      ctx.lineTo(A.x + ux * t0 - nx * half, A.y + uy * t0 - ny * half);
+      ctx.closePath();
+    }
+
+    drawLanes(ctx) {
+      const H = Wd.HALF;
+      ctx.fillStyle = C.lane;
+      for (const e of Wd.edges) { this.laneRect(ctx, e, 0, 0); ctx.fill(); }
+      for (const n of Wd.nodes) if (n.kind === 'cross') ctx.fillRect(n.x - H, n.y - H, H * 2, H * 2);
+      // Intersection traffic zones
+      ctx.strokeStyle = C.zone;
+      ctx.lineWidth = this.px(1);
+      ctx.setLineDash([4, 3]);
+      for (const n of Wd.nodes) if (n.kind === 'cross') ctx.strokeRect(n.x - H + 2, n.y - H + 2, 2 * H - 4, 2 * H - 4);
+      ctx.setLineDash([]);
+    }
+
+    drawRack(ctx, rk, rng) {
+      const { x0, x1, y0, y1, faces } = rk;
+      ctx.fillStyle = C.rack;
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      if (faces.length === 2) {
+        const m = (x0 + x1) / 2;
+        this.drawRackRow(ctx, x0, m - 3, y0, y1, 'left', rng, rk.pitch);
+        this.drawRackRow(ctx, m + 3, x1, y0, y1, 'right', rng, rk.pitch);
+      } else this.drawRackRow(ctx, x0, x1, y0, y1, faces[0], rng, rk.pitch);
+      ctx.strokeStyle = C.rackEdge;
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    }
+
+    drawRackRow(ctx, x0, x1, y0, y1, face, rng, pitch) {
+      const depth = x1 - x0;
+      const nBays = Math.max(1, Math.round((y1 - y0) / (pitch || 53)));
+      const bl = (y1 - y0) / nBays;
+      const deep = depth > 100 ? 2 : 1;
+      const pd = depth / deep;
+      const inset = pd < 40 ? 2 : 3;
+      ctx.lineWidth = this.px(1);
+      for (let b = 0; b < nBays; b++) {
+        for (let d = 0; d < deep; d++) {
+          const x = x0 + d * pd + inset, y = y0 + b * bl + inset, w = pd - 2 * inset, h = bl - 2 * inset;
+          if (rng() < 0.82) {
+            ctx.fillStyle = C.slot;
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = C.slotEdge;
+          } else ctx.strokeStyle = C.grid;
+          ctx.strokeRect(x, y, w, h);
+        }
+      }
+      const faceX = face === 'left' ? x0 : x1;
+      ctx.fillStyle = C.beam;
+      ctx.fillRect(faceX - 1, y0, 2, y1 - y0);
+      const u = Math.max(1, Math.round(53 / bl));
+      for (let b = 0; b <= nBays; b += u) ctx.fillRect(faceX - 2.5, y0 + b * bl - 2.5, 5, 5);
+    }
+
+    drawBays(ctx) {
+      for (const b of Wd.bays) {
+        ctx.fillStyle = C.lane;
+        ctx.fillRect(b.x0 - 1, b.y0, b.x1 - b.x0 + 1, b.y1 - b.y0);
+        ctx.strokeStyle = C.rackEdge;
+        ctx.lineWidth = this.px(1);
+        ctx.beginPath();
+        ctx.moveTo(b.x0, b.y0); ctx.lineTo(b.x1, b.y0); ctx.lineTo(b.x1, b.y1); ctx.lineTo(b.x0, b.y1);
+        ctx.stroke();
+      }
+    }
+
+    drawStationBase(ctx, st) {
+      ctx.save();
+      ctx.translate(st.x, st.y);
+      ctx.rotate(Math.atan2(st.dir.y, st.dir.x));
+      ctx.fillStyle = 'rgba(255,255,255,0.015)';
+      ctx.fillRect(-30, -30, 60, 60);
+      ctx.strokeStyle = '#5a636d';
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(-30, -30, 60, 60);
+      // Docking direction
+      ctx.strokeStyle = '#444b53';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-8, -9); ctx.lineTo(2, 0); ctx.lineTo(-8, 9); ctx.stroke();
+      // Transfer conveyor
+      ctx.fillStyle = '#22262b';
+      ctx.fillRect(28, -26, 30, 52);
+      ctx.strokeStyle = '#4a525b';
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(28, -26, 30, 52);
+      ctx.strokeStyle = '#30353c';
+      for (let x = 32; x <= 54; x += 4) { ctx.beginPath(); ctx.moveTo(x, -23); ctx.lineTo(x, 23); ctx.stroke(); }
+      ctx.restore();
+    }
+
+    drawNetwork(ctx) {
+      ctx.strokeStyle = C.net;
+      ctx.lineWidth = this.px(1);
+      for (const e of Wd.edges) {
+        const A = Wd.nodeMap[e.a], B = Wd.nodeMap[e.b];
+        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+      }
+      for (const n of Wd.nodes) {
+        if (n.kind === 'station') {
+          ctx.fillStyle = C.node;
+          ctx.fillRect(n.x - 2.5, n.y - 2.5, 5, 5);
+          continue;
+        }
+        const r = n.kind === 'cross' ? 3.6 : 2.6;
+        ctx.fillStyle = C.floor;
+        ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = C.node;
+        ctx.lineWidth = this.px(1.2);
+        ctx.stroke();
+      }
+    }
+
+    drawWalls(ctx) {
+      const { x0, y0, x1, y1 } = Wd.WALL;
+      const T = 8;
+      ctx.fillStyle = C.wall;
+      ctx.fillRect(x0 - T, y0 - T, x1 - x0 + 2 * T, T);
+      ctx.fillRect(x0 - T, y1, x1 - x0 + 2 * T, T);
+      ctx.fillRect(x0 - T, y0, T, y1 - y0);
+      ctx.fillRect(x1, y0, T, y1 - y0);
+      ctx.strokeStyle = C.wallEdge;
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.strokeRect(x0 - T, y0 - T, x1 - x0 + 2 * T, y1 - y0 + 2 * T);
+      // Dock door openings with roller-door lines
+      for (const d of Wd.doors) {
+        const hw = d.w / 2;
+        ctx.strokeStyle = '#6a737d';
+        if (d.side === 'top' || d.side === 'bottom') {
+          const y = d.side === 'top' ? y0 : y1, s = d.side === 'top' ? -1 : 1, x = d.pos;
+          ctx.fillStyle = C.bg;
+          ctx.fillRect(x - hw, s < 0 ? y - T - 1 : y, d.w, T + 1);
+          ctx.fillStyle = C.floor;
+          ctx.fillRect(x - hw, y - 1, d.w, 2);
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(x - hw, y + s * T * 0.5); ctx.lineTo(x + hw, y + s * T * 0.5); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = C.wallEdge;
+          ctx.fillRect(x - hw - 2, s < 0 ? y - T : y, 2, T);
+          ctx.fillRect(x + hw, s < 0 ? y - T : y, 2, T);
+        } else {
+          const x = d.side === 'left' ? x0 : x1, s = d.side === 'left' ? -1 : 1, y = d.pos;
+          ctx.fillStyle = C.bg;
+          ctx.fillRect(s < 0 ? x - T - 1 : x, y - hw, T + 1, d.w);
+          ctx.fillStyle = C.floor;
+          ctx.fillRect(x - 1, y - hw, 2, d.w);
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(x + s * T * 0.5, y - hw); ctx.lineTo(x + s * T * 0.5, y + hw); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = C.wallEdge;
+          ctx.fillRect(s < 0 ? x - T : x, y - hw - 2, T, 2);
+          ctx.fillRect(s < 0 ? x - T : x, y + hw, T, 2);
+        }
+      }
+      // Structural columns where the grid meets the walls (none inside door openings)
+      const clear = (side, p) => !Wd.doors.some((d) => d.side === side && Math.abs(d.pos - p) < d.w / 2 + 10);
+      ctx.fillStyle = '#3d434a';
+      for (const x of GRID_X) {
+        if (clear('top', x)) ctx.fillRect(x - 7, y0 - T / 2 - 7, 14, 14);
+        if (clear('bottom', x)) ctx.fillRect(x - 7, y1 + T / 2 - 7, 14, 14);
+      }
+      for (const y of GRID_Y) {
+        if (clear('left', y)) ctx.fillRect(x0 - T / 2 - 7, y - 7, 14, 14);
+        if (clear('right', y)) ctx.fillRect(x1 + T / 2 - 7, y - 7, 14, 14);
+      }
+    }
+
+    drawStaticLabels(ctx) {
+      ctx.textBaseline = 'middle';
+      // Grid bubbles
+      const br = clamp(8 * Math.sqrt(this.scale / 0.7), 6, 11);
+      ctx.font = `500 ${Math.round(br * 1.15)}px ${FONT.sans}`;
+      ctx.textAlign = 'center';
+      const bubble = (x, y, t) => {
+        ctx.beginPath(); ctx.arc(x, y, br, 0, Math.PI * 2);
+        ctx.fillStyle = C.bg; ctx.fill();
+        ctx.strokeStyle = '#4a5159'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = C.gridText; ctx.fillText(t, x, y + 0.5);
+      };
+      GRID_X.forEach((x, i) => bubble(this.sx(x), this.sy(-16), String(i + 1)));
+      GRID_Y.forEach((y, i) => bubble(this.sx(-16), this.sy(y), String.fromCharCode(65 + i)));
+      if (!this.layers.labels || this.compact) return;
+      const f = (w, size, fam) => `${w} ${this.fs(size)}px ${fam}`;
+      // Zone, aisle and lane names from the layout
+      for (const lb of Wd.labels) {
+        ctx.font = f(lb.weight || 400, lb.size || 10, FONT.sans);
+        ctx.fillStyle = C.label;
+        ctx.textAlign = lb.align || 'center';
+        if (lb.rot) {
+          ctx.save();
+          ctx.translate(this.sx(lb.x), this.sy(lb.y));
+          ctx.rotate((lb.rot * Math.PI) / 180);
+          ctx.fillText(lb.text, 0, 0);
+          ctx.restore();
+        } else ctx.fillText(lb.text, this.sx(lb.x), this.sy(lb.y));
+      }
+      // Area names
+      for (const a of Wd.areas) {
+        if (!a.label) continue;
+        if (a.kind === 'cell') {
+          ctx.font = f(500, 9.5, FONT.mono);
+          ctx.textAlign = 'center';
+          ctx.fillStyle = C.labelHi;
+          ctx.fillText(a.label, this.sx((a.x0 + a.x1) / 2), this.sy(a.y0) + 10);
+          continue;
+        }
+        ctx.font = f(500, 9.5, FONT.sans);
+        ctx.textAlign = 'left';
+        const x = a.kind === 'conveyor' ? this.sx(a.lx) : this.sx(a.x0) + 4;
+        const y = a.kind === 'conveyor' ? this.sy(a.ly) : this.sy(a.y0) + 10;
+        const tw = ctx.measureText(a.label).width;
+        ctx.fillStyle = 'rgba(20,22,25,0.85)';
+        ctx.fillRect(x - 3, y - 7, tw + 6, 14);
+        ctx.fillStyle = C.label;
+        ctx.fillText(a.label, x, y + 0.5);
+      }
+      // Rack ids
+      ctx.font = f(500, 9.5, FONT.mono);
+      ctx.textAlign = 'center';
+      Wd.racks.forEach((rk) => {
+        const x = this.sx((rk.x0 + rk.x1) / 2), y = this.sy(rk.y1) - 8;
+        const w = ctx.measureText(rk.id).width + 8;
+        ctx.fillStyle = C.rack;
+        ctx.fillRect(x - w / 2, y - 7, w, 14);
+        ctx.fillStyle = C.label;
+        ctx.fillText(rk.id, x, y + 0.5);
+      });
+      // Doors
+      ctx.font = f(500, 9, FONT.mono);
+      ctx.fillStyle = C.label;
+      const { x0, y0, x1, y1 } = Wd.WALL;
+      for (const d of Wd.doors) {
+        const hw = d.w / 2;
+        if (d.side === 'top' || d.side === 'bottom') {
+          ctx.textAlign = 'left';
+          ctx.fillText(d.label, this.sx(d.pos + hw + 4), this.sy(d.side === 'top' ? y0 + 9 : y1 - 9));
+        } else {
+          ctx.textAlign = d.side === 'right' ? 'right' : 'left';
+          ctx.fillText(d.label, this.sx(d.side === 'right' ? x1 - 5 : x0 + 5), this.sy(d.pos + hw + 9));
+        }
+      }
+      // Node ids
+      ctx.font = f(500, 10, FONT.mono);
+      for (const n of Wd.nodes) {
+        if (n.kind === 'cross') {
+          ctx.textAlign = 'left';
+          ctx.fillStyle = C.labelHi;
+          ctx.fillText(n.id, this.sx(n.x - Wd.HALF + 5), this.sy(n.y - Wd.HALF + 10));
+        } else if (n.kind === 'junction') {
+          ctx.textAlign = 'right';
+          ctx.fillStyle = C.label;
+          ctx.fillText(n.id, this.sx(n.x - 8), this.sy(n.y + 14));
+        }
+      }
+    }
+
+    // ------------------------------------------------------------------ frame
+    draw() {
+      const ctx = this.ctx;
+      const key = this.viewKey();
+      if (!this.statView || (this.statView.key !== key && performance.now() - this.viewChangedAt > 160)) this.drawStatic();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const sv = this.statView;
+      if (sv.key === key) ctx.drawImage(this.stat, 0, 0);
+      else {
+        ctx.fillStyle = C.bg;
+        ctx.fillRect(0, 0, this.cv.width, this.cv.height);
+        const k = this.scale / sv.scale;
+        ctx.drawImage(this.stat, (this.ox - sv.ox * k) * this.dpr, (this.oy - sv.oy * k) * this.dpr, this.stat.width * k, this.stat.height * k);
+      }
+      const L = this.layers;
+      this.setWorld(ctx);
+      this.drawObstructions(ctx);
+      if (L.reservations) this.drawReservations(ctx);
+      this.drawStationsDyn(ctx);
+      if (L.paths) { this.drawPreviews(ctx); this.drawGhosts(ctx); this.drawRoutes(ctx); }
+      this.drawConflicts(ctx);
+      this.drawHover(ctx);
+      if (L.safety) this.drawSafety(ctx);
+      for (const r of this.sim.robots) this.drawRobot(ctx, r);
+      for (const r of this.sim.robots) this.drawTransfer(ctx, r);
+      this.drawSelection(ctx);
+      if (L.comms) this.drawLinks(ctx);
+      this.setScreen(ctx);
+      if (L.labels) this.drawStationLabels(ctx);
+      this.drawZoneLabels(ctx);
+      this.drawRobotTags(ctx);
+      if (L.comms) this.drawCallouts(ctx);
+    }
+
+    pathSeg(geo, a, b) {
+      const p = new Path2D();
+      if (b <= a) return p;
+      const t = this.tmp;
+      geo.at(a, t);
+      p.moveTo(t.x, t.y);
+      for (let k = geo.index(a) + 1; k < geo.n && geo.cs[k] < b; k++) p.lineTo(geo.xs[k], geo.ys[k]);
+      geo.at(b, t);
+      p.lineTo(t.x, t.y);
+      return p;
+    }
+    dimFor(i) { return this.selected >= 0 && this.selected !== i ? 0.3 : 1; }
+
+    drawObstructions(ctx) {
+      const sim = this.sim;
+      for (const eid in sim.obstructions) {
+        const o = sim.obstructions[eid];
+        const e = Wd.edgeMap[eid];
+        const A = Wd.nodeMap[e.a], B = Wd.nodeMap[e.b];
+        const closing = o.state === 'closing';
+        const col = closing ? C.warn : C.alarm;
+        this.laneRect(ctx, e, 4, Wd.HALF + 2);
+        ctx.fillStyle = rgba(col, closing ? 0.06 : 0.1);
+        ctx.fill();
+        if (!closing) {
+          ctx.save();
+          this.laneRect(ctx, e, 4, Wd.HALF + 2);
+          ctx.clip();
+          ctx.strokeStyle = rgba(C.alarm, 0.45);
+          ctx.lineWidth = this.px(1.2);
+          const x0 = Math.min(A.x, B.x) - 60, x1 = Math.max(A.x, B.x) + 60;
+          const y0 = Math.min(A.y, B.y) - 60, y1 = Math.max(A.y, B.y) + 60;
+          ctx.beginPath();
+          for (let k = x0 - (y1 - y0); k < x1; k += 9) { ctx.moveTo(k, y1); ctx.lineTo(k + (y1 - y0), y0); }
+          ctx.stroke();
+          ctx.restore();
+        }
+        this.laneRect(ctx, e, 4, Wd.HALF + 2);
+        ctx.setLineDash(closing ? [5, 4] : []);
+        ctx.strokeStyle = rgba(col, 0.9);
+        ctx.lineWidth = this.px(1.5);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    drawReservations(ctx) {
+      const H = Wd.HALF;
+      for (const r of this.sim.robots) {
+        const a = this.dimFor(r.i);
+        for (const eid of r.held.edges) {
+          const e = Wd.edgeMap[eid];
+          this.laneRect(ctx, e, 9, e.kind === 'spur' ? 0 : H);
+          ctx.fillStyle = rgba(r.color, 0.12 * a);
+          ctx.fill();
+        }
+        for (const nid of r.held.nodes) {
+          const n = Wd.nodeMap[nid];
+          if (n.kind !== 'cross') continue;
+          ctx.fillStyle = rgba(r.color, 0.12 * a);
+          ctx.fillRect(n.x - H + 2, n.y - H + 2, 2 * H - 4, 2 * H - 4);
+          ctx.strokeStyle = rgba(r.color, 0.55 * a);
+          ctx.lineWidth = this.px(1);
+          ctx.strokeRect(n.x - H + 2, n.y - H + 2, 2 * H - 4, 2 * H - 4);
+        }
+      }
+    }
+
+    drawRoutes(ctx) {
+      const sim = this.sim;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const r of sim.robots) {
+        if (!r.route) continue;
+        const R = r.route, geo = R.geo, a = this.dimFor(r.i);
+        const gi = R.idx + R.granted;
+        const claimEnd = gi < R.nodes.length ? Math.max(r.s, R.nodeS[gi] - sim.cfg.stopDist) : geo.length;
+        ctx.strokeStyle = rgba(r.color, 0.95 * a);
+        ctx.lineWidth = this.px(this.selected === r.i ? 3 : 2.2);
+        ctx.stroke(this.pathSeg(geo, r.s, claimEnd));
+        ctx.setLineDash([6, 5]);
+        ctx.strokeStyle = rgba(r.color, 0.7 * a);
+        ctx.lineWidth = this.px(1.4);
+        ctx.stroke(this.pathSeg(geo, claimEnd, geo.length));
+        ctx.setLineDash([]);
+        const g = Wd.nodeMap[R.goal];
+        ctx.strokeStyle = rgba(r.color, 0.95 * a);
+        ctx.lineWidth = this.px(1.6);
+        ctx.strokeRect(g.x - 30, g.y - 30, 60, 60);
+      }
+    }
+
+    drawPreviews(ctx) {
+      for (const r of this.sim.robots) {
+        if (!r.task || !r.task.preview || r.mode !== 'toPickup') continue;
+        ctx.setLineDash([2, 6]);
+        ctx.strokeStyle = rgba(r.color, 0.4 * this.dimFor(r.i));
+        ctx.lineWidth = this.px(1.2);
+        ctx.stroke(this.pathSeg(r.task.preview, 0, r.task.preview.length));
+        ctx.setLineDash([]);
+      }
+    }
+
+    drawGhosts(ctx) {
+      const t = this.sim.t;
+      for (const g of this.sim.fx.ghosts) {
+        if (g.pts.length < 4) continue;
+        const a = (1 - (t - g.t0) / g.dur) * 0.7;
+        ctx.beginPath();
+        ctx.moveTo(g.pts[0], g.pts[1]);
+        for (let i = 2; i < g.pts.length; i += 2) ctx.lineTo(g.pts[i], g.pts[i + 1]);
+        ctx.setLineDash([3, 4]);
+        ctx.strokeStyle = `rgba(160,168,178,${a})`;
+        ctx.lineWidth = this.px(1.2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    drawStationsDyn(ctx) {
+      const sim = this.sim;
+      for (const st of Wd.stations) {
+        const S = sim.stations[st.id];
+        const ang = Math.atan2(st.dir.y, st.dir.x);
+        const docked = sim.robots.find((r) => r.station === st.id);
+        if (docked && (docked.mode === 'loading' || docked.mode === 'unloading')) {
+          ctx.save();
+          ctx.translate(st.x, st.y);
+          ctx.rotate(ang);
+          const dir = docked.mode === 'loading' ? -1 : 1;
+          const off = (((sim.t * 24 * dir) % 4) + 4) % 4;
+          ctx.strokeStyle = '#4d565f';
+          ctx.lineWidth = this.px(1);
+          for (let x = 32 + off; x <= 54; x += 4) { ctx.beginPath(); ctx.moveTo(x, -23); ctx.lineTo(x, 23); ctx.stroke(); }
+          ctx.restore();
+        }
+        if (!S.obj) continue;
+        if (docked && docked.mode === 'loading' && S.obj.state === 'waiting') continue;
+        const alpha = S.obj.state === 'delivered' ? clamp((3.6 - (sim.t - S.obj.t0)) / 1.0, 0, 1) : 1;
+        this.drawBox(ctx, st.stand.x, st.stand.y, ang, alpha, 1);
+      }
+      // Brief outline when a task is created or completed at a station
+      for (const g of sim.fx.rings) {
+        if (g.kind !== 'spawn' && g.kind !== 'done') continue;
+        const life = (sim.t - g.t0) / g.dur;
+        ctx.strokeStyle = rgba(g.kind === 'done' ? C.ok : C.payload, 0.8 * (1 - life));
+        ctx.lineWidth = this.px(1.5);
+        const s = g.kind === 'done' ? 34 : 20;
+        ctx.strokeRect(g.x - s, g.y - s, 2 * s, 2 * s);
+      }
+    }
+
+    drawBox(ctx, x, y, ang, alpha, sc) {
+      ctx.save();
+      ctx.globalAlpha *= alpha;
+      ctx.save();
+      ctx.translate(x + 1.5, y + 2);
+      ctx.rotate(ang);
+      ctx.scale(sc, sc);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(-11, -11, 22, 22);
+      ctx.restore();
+      ctx.translate(x, y);
+      ctx.rotate(ang);
+      ctx.scale(sc, sc);
+      ctx.fillStyle = C.payload;
+      ctx.fillRect(-11, -11, 22, 22);
+      ctx.strokeStyle = '#5f4628';
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(-11, -11, 22, 22);
+      ctx.fillStyle = '#c3a26f';
+      ctx.fillRect(-11, -2, 22, 4);
+      ctx.fillStyle = '#e6e3da';
+      ctx.fillRect(3, 4.5, 6, 4);
+      ctx.restore();
+    }
+
+    drawConflicts(ctx) {
+      const sim = this.sim, H = Wd.HALF;
+      for (const r of sim.robots) {
+        const b = r.block;
+        if (!b || !b.logged || b.silent || !r.route) continue;
+        const N = Wd.nodeMap[b.node];
+        if (b.kind === 'corridor' && b.edge) {
+          this.laneRect(ctx, Wd.edgeMap[b.edge], 6, H);
+          ctx.strokeStyle = rgba(C.warn, 0.8);
+          ctx.lineWidth = this.px(1.2);
+          ctx.setLineDash([5, 4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        const zs = N.kind === 'cross' ? H - 2 : 26;
+        ctx.fillStyle = rgba(C.warn, 0.16);
+        ctx.fillRect(N.x - zs, N.y - zs, 2 * zs, 2 * zs);
+        ctx.strokeStyle = C.warn;
+        ctx.lineWidth = this.px(1.5);
+        ctx.strokeRect(N.x - zs, N.y - zs, 2 * zs, 2 * zs);
+        // Hold line in front of the waiting robot
+        const R = r.route, gi = R.idx + R.granted;
+        if (gi < R.nodes.length) {
+          R.geo.at(Math.min(R.geo.length, R.nodeS[gi] - sim.cfg.stopDist + 29), this.tmp);
+          const { x, y, h } = this.tmp;
+          const nx = -Math.sin(h), ny = Math.cos(h);
+          ctx.strokeStyle = C.warn;
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'butt';
+          ctx.beginPath(); ctx.moveTo(x - nx * 24, y - ny * 24); ctx.lineTo(x + nx * 24, y + ny * 24); ctx.stroke();
+        }
+      }
+      for (const m of sim.fx.marks) {
+        if (m.kind !== 'resolved') continue;
+        const N = Wd.nodeMap[m.node];
+        const life = (sim.t - m.t0) / m.dur;
+        const zs = N.kind === 'cross' ? H - 2 : 26;
+        ctx.strokeStyle = rgba(C.ok, 0.9 * (1 - life));
+        ctx.lineWidth = this.px(1.5);
+        ctx.strokeRect(N.x - zs, N.y - zs, 2 * zs, 2 * zs);
+      }
+    }
+
+    drawHover(ctx) {
+      const h = this.hover;
+      if (!h) return;
+      if (h.edge) {
+        const blocked = !!this.sim.obstructions[h.edge];
+        this.laneRect(ctx, Wd.edgeMap[h.edge], 2, Wd.HALF);
+        if (this.tool === 'block') {
+          ctx.fillStyle = blocked ? rgba(C.ok, 0.1) : rgba(C.alarm, 0.12);
+          ctx.fill();
+        }
+        ctx.strokeStyle = this.tool === 'block' ? (blocked ? C.ok : C.alarm) : 'rgba(225,228,232,0.6)';
+        ctx.lineWidth = this.px(1.2);
+        ctx.setLineDash([5, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (h.station) {
+        const st = Wd.stationMap[h.station];
+        ctx.strokeStyle = 'rgba(225,228,232,0.7)';
+        ctx.lineWidth = this.px(1.2);
+        ctx.strokeRect(st.x - 33, st.y - 33, 66, 66);
+      }
+    }
+
+    drawSafety(ctx) {
+      const L = this.sim.cfg.L, W = this.sim.cfg.Wr;
+      for (const r of this.sim.robots) {
+        const warnLen = 26 + r.v * 0.5, protLen = 10 + r.v * 0.22;
+        ctx.save();
+        ctx.translate(r.x, r.y);
+        ctx.rotate(r.h);
+        if (r.follow >= 0) { ctx.fillStyle = rgba(C.warn, 0.1); ctx.fillRect(L / 2, -W / 2 - 8, warnLen, W + 16); }
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = rgba(C.warn, 0.7);
+        ctx.lineWidth = this.px(1);
+        ctx.strokeRect(L / 2, -W / 2 - 8, warnLen, W + 16);
+        ctx.setLineDash([]);
+        ctx.strokeStyle = rgba(C.alarm, 0.75);
+        ctx.strokeRect(L / 2, -W / 2 - 3, protLen, W + 6);
+        ctx.restore();
+      }
+    }
+
+    drawRobot(ctx, r) {
+      const sim = this.sim;
+      const L = sim.cfg.L, W = sim.cfg.Wr;
+      const tone = TONE[sim.status(r).tone] || C.ok;
+      const a = this.dimFor(r.i) < 1 ? 0.75 : 1;
+      ctx.save();
+      ctx.globalAlpha = a;
+      // Flat contact shadow, offset in world space
+      ctx.save();
+      ctx.translate(r.x + 2, r.y + 3);
+      ctx.rotate(r.h);
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      rr(ctx, -L / 2, -W / 2, L, W, 6);
+      ctx.fill();
+      ctx.restore();
+      ctx.translate(r.x, r.y);
+      ctx.rotate(r.h);
+      // Chassis
+      ctx.fillStyle = '#4a5058';
+      rr(ctx, -L / 2, -W / 2, L, W, 6);
+      ctx.fill();
+      ctx.strokeStyle = '#0e1012';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      // Front bumper, and the rear bumper band in the robot's fleet colour
+      ctx.fillStyle = '#1d2024';
+      ctx.fillRect(L / 2 - 3.5, -W / 2 + 4, 2.5, W - 8);
+      ctx.fillStyle = r.color;
+      ctx.fillRect(-L / 2 + 1, -W / 2 + 4, 4, W - 8);
+      // Top deck with status light strip
+      ctx.fillStyle = '#2e3238';
+      rr(ctx, -L / 2 + 7, -W / 2 + 5, L - 14, W - 10, 3);
+      ctx.fill();
+      ctx.strokeStyle = tone;
+      ctx.lineWidth = 1.7;
+      rr(ctx, -L / 2 + 6.5, -W / 2 + 3.4, L - 12, W - 6.8, 4);
+      ctx.stroke();
+      // Heading chevron
+      ctx.strokeStyle = '#c7cdd4';
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(L / 2 - 14, -5); ctx.lineTo(L / 2 - 9, 0); ctx.lineTo(L / 2 - 14, 5); ctx.stroke();
+      // Scanners on opposite corners
+      for (const [x, y] of [[L / 2 - 5, -W / 2 + 5], [-L / 2 + 5, W / 2 - 5]]) {
+        ctx.fillStyle = '#121417';
+        ctx.beginPath(); ctx.arc(x, y, 3.3, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#59616a';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+      // Head and tail lamps
+      ctx.fillStyle = '#e9edf1';
+      ctx.fillRect(L / 2 - 1.4, -W / 2 + 5, 1.2, 4);
+      ctx.fillRect(L / 2 - 1.4, W / 2 - 9, 1.2, 4);
+      ctx.fillStyle = '#b8453f';
+      ctx.fillRect(-L / 2 + 0.3, -W / 2 + 5, 1.2, 4);
+      ctx.fillRect(-L / 2 + 0.3, W / 2 - 9, 1.2, 4);
+      // Unit number on the deck
+      if (!r.carrying && this.scale > 0.5) {
+        ctx.rotate(Math.PI / 2);
+        ctx.fillStyle = '#7b838d';
+        ctx.font = `600 8px ${FONT.mono}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(r.id.slice(-2), 0, 5);
+      }
+      ctx.restore();
+      if (r.carrying && r.mode !== 'unloading') this.drawBox(ctx, r.x - Math.cos(r.h) * 3, r.y - Math.sin(r.h) * 3, r.h, a, 0.9);
+    }
+
+    drawTransfer(ctx, r) {
+      if (r.mode !== 'loading' && r.mode !== 'unloading') return;
+      const st = Wd.stationMap[r.station];
+      const cfg = this.sim.cfg;
+      const p = ease(clamp((r.timer - 0.3) / (cfg.transferTime - 0.8), 0, 1));
+      const from = r.mode === 'loading' ? st.stand : r, to = r.mode === 'loading' ? r : st.stand;
+      this.drawBox(ctx, from.x + (to.x - from.x) * p, from.y + (to.y - from.y) * p, r.h, 1, r.mode === 'loading' ? 1 - p * 0.1 : 0.9 + p * 0.1);
+    }
+
+    drawSelection(ctx) {
+      if (this.selected < 0) return;
+      const r = this.sim.robots[this.selected];
+      const L = this.sim.cfg.L + 12, W = this.sim.cfg.Wr + 12;
+      ctx.save();
+      ctx.translate(r.x, r.y);
+      ctx.rotate(r.h);
+      ctx.strokeStyle = '#e1e4e8';
+      ctx.lineWidth = this.px(1);
+      ctx.strokeRect(-L / 2, -W / 2, L, W);
+      ctx.fillStyle = '#e1e4e8';
+      const hs = this.px(4);
+      for (const [x, y] of [[-L / 2, -W / 2], [L / 2, -W / 2], [L / 2, W / 2], [-L / 2, W / 2]]) ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+      ctx.restore();
+    }
+
+    drawLinks(ctx) {
+      const sim = this.sim;
+      for (const l of sim.fx.links) {
+        const A = sim.robots[l.a], B = sim.robots[l.b];
+        const life = (sim.t - l.t0) / l.dur;
+        const env = clamp(life / 0.1, 0, 1) * clamp((1 - life) / 0.25, 0, 1);
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = `rgba(200,206,214,${0.6 * env})`;
+        ctx.lineWidth = this.px(1);
+        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+        ctx.setLineDash([]);
+        // One message packet A → B, then the reply B → A
+        const u = clamp(life / 0.35, 0, 1), v = clamp((life - 0.4) / 0.35, 0, 1);
+        const dot = (P, Q, f) => {
+          if (f <= 0 || f >= 1) return;
+          ctx.fillStyle = `rgba(230,233,237,${env})`;
+          ctx.beginPath(); ctx.arc(P.x + (Q.x - P.x) * f, P.y + (Q.y - P.y) * f, this.px(3), 0, Math.PI * 2); ctx.fill();
+        };
+        dot(A, B, u);
+        dot(B, A, v);
+      }
+    }
+
+    // ------------------------------------------------------------------ screen-space annotations
+    tag(ctx, x, y, parts, opt) {
+      opt = opt || {};
+      const size = opt.size || this.fs(11);
+      const padX = opt.padX == null ? 5 : opt.padX;
+      const h = Math.round(size + (opt.padY == null ? 7 : opt.padY));
+      let w = padX * 2;
+      for (const p of parts) {
+        ctx.font = `${p.weight || 500} ${p.size || size}px ${p.mono ? FONT.mono : FONT.sans}`;
+        p.w = p.square ? 7 : ctx.measureText(p.text).width;
+        w += p.w + (p.gap || 0);
+      }
+      w = Math.ceil(w);
+      let x0 = opt.align === 'left' ? x : opt.align === 'right' ? x - w : x - w / 2;
+      x0 = Math.round(clamp(x0, 2, this.cw - w - 2));
+      const y0 = Math.round(clamp(y - h / 2, 2, this.ch - h - 2));
+      ctx.globalAlpha = opt.alpha == null ? 1 : opt.alpha;
+      ctx.fillStyle = opt.bg || C.tagBg;
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = opt.border || C.tagEdge;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+      let tx = x0 + padX;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      for (const p of parts) {
+        if (p.square) {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(tx, Math.round(y0 + h / 2 - 3.5), 7, 7);
+        } else {
+          ctx.font = `${p.weight || 500} ${p.size || size}px ${p.mono ? FONT.mono : FONT.sans}`;
+          ctx.fillStyle = p.color || C.text;
+          ctx.fillText(p.text, tx, y0 + h / 2 + 0.5);
+        }
+        tx += p.w + (p.gap || 0);
+      }
+      ctx.globalAlpha = 1;
+      return { x0, y0, w, h };
+    }
+
+    stationTarget(id) {
+      for (const r of this.sim.robots) {
+        if (!r.task) continue;
+        const toPick = r.mode === 'toPickup' || r.mode === 'loading';
+        if (toPick && r.task.pickup === id) return { r, kind: 'Pick' };
+        if (!toPick && r.task.drop === id) return { r, kind: 'Drop' };
+      }
+      return null;
+    }
+
+    drawStationLabels(ctx) {
+      const sim = this.sim;
+      for (const st of Wd.stations) {
+        let x, y, align;
+        if (st.dir.y < 0) { x = this.sx(st.x - 36); y = this.sy(st.y - 18); align = 'right'; }
+        else if (st.dir.y > 0) { x = this.sx(st.x - 36); y = this.sy(st.y + 18); align = 'right'; }
+        else { x = this.sx(st.x - 30); y = this.sy(st.y - 58); align = 'left'; }
+        const S = sim.stations[st.id];
+        const tg = this.stationTarget(st.id);
+        const size = this.compact ? 9 : this.fs(10.5);
+        const parts = [{ text: st.id, mono: true, weight: 600, color: '#d3d7dc', size }];
+        let border = C.tagEdge;
+        if (tg) {
+          border = tg.r.color;
+          if (!this.compact) parts.push({ text: ' ' + tg.kind, color: tg.r.color, weight: 600, size: size - 0.5 });
+        } else if (S.obj && S.obj.state === 'waiting' && !this.compact) {
+          parts.push({ text: ' ' + S.obj.task, mono: true, color: '#c6a36f', size: size - 1 });
+        }
+        if (this.hover && this.hover.station === st.id) border = '#e1e4e8';
+        this.tag(ctx, x, y, parts, { align, border, size, padX: this.compact ? 3 : 5, padY: this.compact ? 4 : 7 });
+      }
+    }
+
+    drawZoneLabels(ctx) {
+      const sim = this.sim;
+      if (this.compact) return;
+      const size = this.fs(10);
+      for (const eid in sim.obstructions) {
+        const o = sim.obstructions[eid];
+        const e = Wd.edgeMap[eid];
+        const A = Wd.nodeMap[e.a], B = Wd.nodeMap[e.b];
+        const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+        const left = Math.max(0, Math.ceil(o.until - sim.t));
+        const closing = o.state === 'closing';
+        const parts = [{ text: closing ? 'Closing' : `Blocked ${left} s`, color: closing ? C.warn : C.alarm, weight: 600, size }];
+        const opt = { border: closing ? C.warn : C.alarm, size };
+        if (e.kind === 'aisle') this.tag(ctx, this.sx(mx - Wd.HALF - 6), this.sy(my), parts, Object.assign(opt, { align: 'right' }));
+        else this.tag(ctx, this.sx(mx), this.sy(my - Wd.HALF - 12), parts, opt);
+      }
+      const shown = new Set();
+      for (const r of sim.robots) {
+        const b = r.block;
+        if (!b || !b.logged || b.silent || shown.has(b.node)) continue;
+        shown.add(b.node);
+        const N = Wd.nodeMap[b.node];
+        const zs = N.kind === 'cross' ? Wd.HALF - 2 : 26;
+        this.tag(ctx, this.sx(N.x + zs), this.sy(N.y - zs) - 10, [{ text: 'Conflict ' + b.node, color: C.warn, weight: 600, size }], { align: 'left', border: C.warn, size });
+      }
+    }
+
+    drawRobotTags(ctx) {
+      const sim = this.sim;
+      const placed = [];
+      const QUIET = { move: 1, follow: 1, turn: 1 };
+      for (const r of sim.robots) {
+        const st = sim.status(r);
+        const x = this.sx(r.x);
+        const a = this.dimFor(r.i) < 1 ? 0.6 : 1;
+        if (this.compact) {
+          this.tag(ctx, x, this.sy(r.y) - this.scale * 30 - 9, [{ square: true, color: r.color, gap: 3 }, { text: r.id.slice(-2), mono: true, weight: 600, size: 9 }], { size: 9, padX: 3, padY: 4, alpha: a });
+          continue;
+        }
+        let y = this.sy(r.y) - this.scale * 34 - 12;
+        for (const p of placed) if (Math.abs(p.x - x) < 120 && Math.abs(p.y - y) < 21) y = p.y - 21;
+        placed.push({ x, y });
+        const size = this.fs(11);
+        const parts = [{ square: true, color: r.color, gap: 5 }, { text: r.id, mono: true, weight: 600, size }];
+        if (!QUIET[st.key]) parts.push({ text: '  ' + st.label, color: TONE[st.tone] || C.text2, weight: 600, size: size - 0.5 });
+        this.tag(ctx, x, y, parts, { size, alpha: a, border: this.selected === r.i ? '#e1e4e8' : C.tagEdge });
+      }
+    }
+
+    drawCallouts(ctx) {
+      const sim = this.sim;
+      if (this.compact) return;
+      const boxes = [];
+      for (let i = sim.fx.links.length - 1; i >= 0 && boxes.length < 3; i--) {
+        const l = sim.fx.links[i];
+        const A = sim.robots[l.a], B = sim.robots[l.b];
+        const life = (sim.t - l.t0) / l.dur;
+        const env = clamp(life / 0.1, 0, 1) * clamp((1 - life) / 0.25, 0, 1);
+        const size = this.fs(10.5);
+        const sm = size - 1;
+        const lines = [
+          [{ text: 'V2V  ', color: '#7f8791', mono: true, size: sm }, { text: A.id, color: A.color, mono: true, weight: 600, size: sm },
+            { text: ' ↔ ', color: '#7f8791', size: sm }, { text: B.id, color: B.color, mono: true, weight: 600, size: sm }],
+          [{ text: A.id.slice(-2) + '  ', color: A.color, mono: true, weight: 600, size }, { text: l.chipA || '', color: C.text, size }],
+        ];
+        if (l.chipB && life > 0.4) {
+          const warn = l.kind === 'yield' || l.kind === 'corridor' || l.kind === 'deadlock';
+          lines.push([{ text: B.id.slice(-2) + '  ', color: B.color, mono: true, weight: 600, size }, { text: l.chipB, color: warn ? C.warn : C.text, size }]);
+        }
+        const lh = size + 6, padX = 7, padY = 5;
+        let w = 0;
+        for (const ln of lines) {
+          let lw = 0;
+          for (const p of ln) { ctx.font = `${p.weight || 500} ${p.size}px ${p.mono ? FONT.mono : FONT.sans}`; p.w = ctx.measureText(p.text).width; lw += p.w; }
+          w = Math.max(w, lw);
+        }
+        w = Math.ceil(w + padX * 2);
+        const h = lines.length * lh + padY * 2 - 2;
+        let x = (this.sx(A.x) + this.sx(B.x)) / 2 - w / 2;
+        let y = Math.min(this.sy(A.y), this.sy(B.y)) - this.scale * 64 - h;
+        if (y < 4) y = Math.max(this.sy(A.y), this.sy(B.y)) + this.scale * 46;
+        for (const bx of boxes) if (x < bx.x + bx.w && x + w > bx.x && y < bx.y + bx.h && y + h > bx.y) y = bx.y - h - 6;
+        x = Math.round(clamp(x, 4, this.cw - w - 4));
+        y = Math.round(clamp(y, 4, this.ch - h - 4));
+        boxes.push({ x, y, w, h });
+        ctx.globalAlpha = env;
+        ctx.fillStyle = 'rgba(12,14,16,0.95)';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = '#4a5159';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        lines.forEach((ln, k) => {
+          let tx = x + padX;
+          const ty = y + padY + k * lh + lh / 2 - 1;
+          for (const p of ln) {
+            ctx.font = `${p.weight || 500} ${p.size}px ${p.mono ? FONT.mono : FONT.sans}`;
+            ctx.fillStyle = p.color;
+            ctx.fillText(p.text, tx, ty);
+            tx += p.w;
+          }
+        });
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // ------------------------------------------------------------------ hit testing
+    pick(px, py) {
+      const p = this.toWorld(px, py);
+      for (const r of this.sim.robots) if (Math.hypot(r.x - p.x, r.y - p.y) < 32) return { robot: r.i };
+      for (const st of Wd.stations) {
+        if (Math.abs(st.x - p.x) < 32 && Math.abs(st.y - p.y) < 32) return { station: st.id };
+        if (Math.abs(st.stand.x - p.x) < 18 && Math.abs(st.stand.y - p.y) < 28) return { station: st.id };
+      }
+      let best = null, bd = Wd.HALF + 4;
+      for (const e of Wd.edges) {
+        if (e.kind === 'spur') continue;
+        const A = Wd.nodeMap[e.a], B = Wd.nodeMap[e.b];
+        const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len;
+        const t = (p.x - A.x) * ux + (p.y - A.y) * uy;
+        if (t < Wd.HALF * 0.6 || t > e.len - Wd.HALF * 0.6) continue;
+        const d = Math.abs((p.x - A.x) * -uy + (p.y - A.y) * ux);
+        if (d < bd) { bd = d; best = e; }
+      }
+      return best ? { edge: best.id } : null;
+    }
+  }
+
+  WH.Renderer = Renderer;
+  WH.TONE = TONE;
+  WH.COLORS = C;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+/*
+ * ui.js — console chrome for EdgeFleet: robots table and detail, tasks table, summary,
+ * event log, playback, map tools, layers, zoom/pan and map hover/click.
+ */
+(function (root) {
+  'use strict';
+  const WH = root.WH;
+  const Wd = WH.world;
+  const C = WH.COLORS;
+  const TONE = WH.TONE;
+
+  const BOX = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z"/><path d="M2.5 5 8 7.5 13.5 5M8 7.5v6"/></svg>';
+  const LEVEL_ICON = {
+    info: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.2" fill="currentColor"/></svg>',
+    notice: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="6" cy="6" r="4.6"/><path d="M6 5.2v3.2M6 3.4v.1"/></svg>',
+    warn: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M6 1.6 11 10.4H1z"/><path d="M6 5v2.4M6 8.8v.1"/></svg>',
+    alarm: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="currentColor"/><path d="M6 3.4v3.4M6 8.3v.2" stroke="#1a1d20" stroke-width="1.4"/></svg>',
+  };
+  const LEVEL = {
+    system: 'info', task: 'info', claim: 'info', pickup: 'info', deliver: 'info',
+    negotiate: 'notice', reroute: 'notice', resolve: 'notice', clear: 'notice',
+    conflict: 'warn', deadlock: 'warn', block: 'warn', alert: 'alarm',
+  };
+  const TASK_TYPES = { system: 1, task: 1, claim: 1, pickup: 1, deliver: 1 };
+  const HINT = {
+    select: 'Click a robot or station to inspect it. Drag to pan, scroll to zoom.',
+    block: 'Click a path segment to block it for 25 s. Click a blocked segment to reopen it.',
+  };
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const p2 = (n) => String(n).padStart(2, '0');
+  const toM = (u) => (u / Wd.UNITS_PER_M);
+
+  class UI {
+    constructor(sim, renderer) {
+      this.sim = sim;
+      this.rd = renderer;
+      this.speed = 1;
+      this.paused = false;
+      this.filter = 'all';
+      this.lastEv = 0;
+      this.log = [];
+      this.nextPanel = 0;
+      this.deliveryTimes = [];
+      const start = new Date();
+      start.setMilliseconds(0);
+      this.t0 = start.getTime();
+      const $ = (id) => document.getElementById(id);
+      this.el = {
+        clock: $('clock'), btnPlay: $('btnPlay'), icoPause: $('icoPause'), icoPlay: $('icoPlay'), speedSel: $('speedSel'),
+        wrap: $('canvasWrap'), canvas: $('map'), tip: $('tip'), toast: $('toast'), hint: $('toolHint'),
+        cursorPos: $('cursorPos'), zoomPct: $('zoomPct'), scaleBar: $('scaleBar'),
+        robotRows: $('robotRows'), detail: $('robotDetail'), taskRows: $('taskRows'), taskMeta: $('taskMeta'), logEl: $('log'),
+        kDel: $('kDel'), kThr: $('kThr'), kAct: $('kAct'), kCon: $('kCon'), kRer: $('kRer'), kCol: $('kCol'),
+        btnLayers: $('btnLayers'), layersMenu: $('layersMenu'),
+      };
+      this.buildRobotRows();
+      this.bindControls();
+      this.bindMap();
+      this.bindKeys();
+      this.updateViewInfo();
+    }
+
+    clock(t) {
+      const d = new Date(this.t0 + t * 1000);
+      return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    }
+
+    // ------------------------------------------------------------------ robots
+    buildRobotRows() {
+      this.rows = this.sim.robots.map((r) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.tabIndex = 0;
+        row.setAttribute('role', 'button');
+        row.setAttribute('aria-pressed', 'false');
+        row.innerHTML = `
+          <div class="cells">
+            <span class="rid"><i class="idsq" style="background:${r.color}"></i>${r.id}</span>
+            <span class="state">–</span>
+            <span class="route">–</span>
+            <span class="load r">${BOX}</span>
+          </div>
+          <div class="sub">–</div>
+          <div class="bar"><i></i></div>`;
+        const toggle = () => this.select(this.rd.selected === r.i ? -1 : r.i);
+        row.addEventListener('click', toggle);
+        row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+        this.el.robotRows.appendChild(row);
+        return {
+          row, state: row.querySelector('.state'), route: row.querySelector('.route'), load: row.querySelector('.load'),
+          sub: row.querySelector('.sub'), bar: row.querySelector('.bar i'), key: '',
+        };
+      });
+    }
+
+    select(i) {
+      this.rd.selected = i;
+      this.rows.forEach((x, k) => {
+        x.row.classList.toggle('sel', k === i);
+        x.row.setAttribute('aria-pressed', String(k === i));
+      });
+      this.el.detail.hidden = i < 0;
+      this.updateDetail();
+    }
+
+    taskProgress(r) {
+      const lp = this.sim.legProgress(r);
+      if (r.mode === 'toPickup') return lp * 0.5;
+      if (r.mode === 'loading') return 0.5;
+      if (r.mode === 'toDrop') return 0.5 + lp * 0.5;
+      return r.mode === 'unloading' ? 1 : 0;
+    }
+
+    updateRobots() {
+      const sim = this.sim;
+      sim.robots.forEach((r, k) => {
+        const x = this.rows[k];
+        const st = sim.status(r);
+        if (x.state.textContent !== st.label) x.state.textContent = st.label;
+        x.state.style.setProperty('--c', TONE[st.tone]);
+        const t = r.task;
+        const toPick = r.mode === 'toPickup' || r.mode === 'loading';
+        const key = t ? t.id + (toPick ? 'p' : 'd') : 'none';
+        if (key !== x.key) {
+          x.key = key;
+          x.route.innerHTML = t
+            ? (toPick ? `<b>${t.pickup}</b><span class="arr">→</span>${t.drop}` : `${t.pickup}<span class="arr">→</span><b>${t.drop}</b>`)
+            : '<span class="arr">–</span>';
+        }
+        const carrying = r.carrying || r.mode === 'unloading';
+        x.load.classList.toggle('on', carrying);
+        x.load.title = carrying ? 'Carrying payload' : 'Empty';
+        if (x.sub.textContent !== st.text) x.sub.textContent = st.text;
+        x.bar.style.width = (this.taskProgress(r) * 100).toFixed(1) + '%';
+      });
+    }
+
+    updateDetail() {
+      const i = this.rd.selected;
+      if (i < 0) return;
+      const sim = this.sim, r = sim.robots[i], st = sim.status(r), t = r.task;
+      const reserved = [];
+      for (const n of r.held.nodes) if (Wd.nodeMap[n].kind !== 'station') reserved.push(n);
+      for (const e of r.held.edges) reserved.push(Wd.edgeMap[e].name);
+      const heading = ((Math.round((r.h * 180) / Math.PI) % 360) + 360) % 360;
+      const seg = r.route && r.route.idx < r.route.nodes.length
+        ? `${Wd.edgeBetween(r.prev, r.route.nodes[r.route.idx]).name} → ${r.route.nodes[r.route.idx]}`
+        : r.station ? `Docked at ${r.station}` : '–';
+      const leg = !t ? '–' : r.mode === 'toPickup' ? `To pickup ${t.pickup}, ${Math.round(sim.legProgress(r) * 100)}%`
+        : r.mode === 'toDrop' ? `To drop-off ${t.drop}, ${Math.round(sim.legProgress(r) * 100)}%`
+        : r.mode === 'loading' ? `Loading at ${t.pickup}` : `Unloading at ${t.drop}`;
+      const rows = [
+        ['State', `<span class="state" style="--c:${TONE[st.tone]}">${esc(st.label)}</span>`],
+        ['Detail', esc(st.text)],
+        ['Task', t ? `<span class="mono">${t.id}</span> · ${t.pickup} → ${t.drop}` : 'None'],
+        ['Leg', esc(leg)],
+        ['Payload', r.carrying || r.mode === 'unloading' ? `Carton for ${t ? t.drop : '–'}` : 'None'],
+        ['Speed', `<span class="mono">${toM(r.v).toFixed(2)} m/s</span>`],
+        ['Pose', `<span class="mono">${toM(r.x - Wd.WALL.x0).toFixed(2)}, ${toM(r.y - Wd.WALL.y0).toFixed(2)} m · ${heading}°</span>`],
+        ['Segment', esc(seg)],
+        ['Reserved', reserved.length ? esc(reserved.join(', ')) : 'None'],
+        ['Completed', `${r.deliveries} task${r.deliveries === 1 ? '' : 's'} · ${toM(r.odo).toFixed(0)} m driven`],
+      ];
+      this.el.detail.innerHTML =
+        `<h3><i class="idsq" style="background:${r.color}"></i><span class="mono">${r.id}</span><span class="x">Esc to close</span></h3>` +
+        `<dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+    }
+
+    // ------------------------------------------------------------------ tasks & summary
+    updateTasks() {
+      const sim = this.sim;
+      const active = sim.tasks.filter((t) => t.state === 'assigned' || t.state === 'picked');
+      const rows = active.concat(sim.pending);
+      const status = (t) => {
+        if (t.state === 'pending') return ['Queued', C.idle];
+        const r = sim.robots[t.robot];
+        if (r.mode === 'loading') return ['Loading', C.work];
+        if (r.mode === 'unloading') return ['Unloading', C.work];
+        return t.state === 'picked' ? ['In transit', C.ok] : ['To pickup', C.ok];
+      };
+      const html = rows.map((t) => {
+        const [label, col] = status(t);
+        const r = t.robot >= 0 ? sim.robots[t.robot] : null;
+        return `<div class="row${t.state === 'pending' ? ' queued' : ''}"><div class="cells">` +
+          `<span>${t.id}</span><span>${t.pickup}</span><span>${t.drop}</span>` +
+          `<span>${r ? `<span class="rid"><i class="idsq" style="background:${r.color}"></i>${r.id.slice(-2)}</span>` : '–'}</span>` +
+          `<span class="st"><span class="state" style="--c:${col}">${label}</span></span></div></div>`;
+      }).join('') || '<div class="empty">No tasks</div>';
+      if (html !== this.taskHTML) { this.el.taskRows.innerHTML = html; this.taskHTML = html; }
+      this.el.taskMeta.textContent = `${active.length} active · ${sim.pending.length} queued`;
+      this.activeCount = active.length;
+    }
+
+    updateSummary() {
+      const sim = this.sim, st = sim.stats;
+      const cut = sim.t - 300;
+      while (this.deliveryTimes.length && this.deliveryTimes[0] < cut) this.deliveryTimes.shift();
+      const win = Math.min(300, sim.t);
+      this.el.kDel.textContent = st.deliveries;
+      this.el.kThr.textContent = sim.t < 45 ? '–' : ((this.deliveryTimes.length / win) * 60).toFixed(1);
+      this.el.kAct.textContent = this.activeCount || 0;
+      this.el.kCon.textContent = st.conflicts + st.negotiations + st.deadlocks;
+      this.el.kRer.textContent = st.reroutes;
+      this.el.kCol.textContent = st.collisions;
+      this.el.kCol.classList.toggle('alarm', st.collisions > 0);
+      this.el.kCon.parentElement.title = `${st.yields} yields, ${st.negotiations} negotiated, ${st.deadlocks} deadlocks resolved`;
+      this.el.kCol.parentElement.title = isFinite(st.minSep) ? `Closest approach ${toM(st.minSep).toFixed(2)} m centre to centre` : '';
+      this.el.clock.textContent = this.clock(sim.t);
+    }
+
+    // ------------------------------------------------------------------ event log
+    partHTML(p) {
+      if (typeof p === 'string') return esc(p);
+      if (p.r != null) { const r = this.sim.robots[p.r]; return `<span class="r" style="--rc:${r.color}"><i></i>${r.id}</span>`; }
+      if (p.n) return `<span class="n">${esc(p.n)}</span>`;
+      if (p.s) return `<span class="s">${esc(p.s)}</span>`;
+      if (p.task) return `<span class="t">${esc(p.task)}</span>`;
+      if (p.e) { const e = Wd.edgeMap[p.e]; return `<span class="e">${esc(e ? e.name : p.e)}</span>`; }
+      return '';
+    }
+    evHTML(ev, fresh) {
+      const lv = LEVEL[ev.type] || 'info';
+      return `<div class="ev ${lv}${fresh ? ' fresh' : ''}"><time>${this.clock(ev.t)}</time><span class="lv">${LEVEL_ICON[lv]}</span><p>${ev.parts.map((p) => this.partHTML(p)).join('')}</p></div>`;
+    }
+    passes(ev) {
+      if (this.filter === 'all') return true;
+      return this.filter === 'tasks' ? !!TASK_TYPES[ev.type] : !TASK_TYPES[ev.type];
+    }
+    updateLog() {
+      const fresh = this.sim.events.filter((e) => e.id > this.lastEv);
+      if (!fresh.length) return;
+      this.lastEv = fresh[fresh.length - 1].id;
+      let html = '';
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const ev = fresh[i];
+        if (ev.type === 'deliver') this.deliveryTimes.push(ev.t);
+        this.log.unshift(ev);
+        if (this.passes(ev)) html += this.evHTML(ev, true);
+      }
+      if (this.log.length > 300) this.log.length = 300;
+      if (html) {
+        this.el.logEl.insertAdjacentHTML('afterbegin', html);
+        while (this.el.logEl.children.length > 120) this.el.logEl.lastElementChild.remove();
+      }
+    }
+    renderLog() {
+      this.el.logEl.innerHTML = this.log.filter((e) => this.passes(e)).slice(0, 120).map((e) => this.evHTML(e, false)).join('');
+    }
+
+    // ------------------------------------------------------------------ controls
+    setPaused(p) {
+      this.paused = p;
+      this.el.icoPause.toggleAttribute('hidden', p);
+      this.el.icoPlay.toggleAttribute('hidden', !p);
+      this.el.btnPlay.setAttribute('aria-label', p ? 'Resume simulation' : 'Pause simulation');
+      this.el.btnPlay.title = p ? 'Resume (Space)' : 'Pause (Space)';
+    }
+    setSpeed(s) {
+      this.speed = s;
+      this.el.speedSel.value = String(s);
+    }
+    setTool(tool) {
+      this.rd.tool = tool;
+      document.querySelectorAll('.btn.tool').forEach((b) => {
+        const on = b.dataset.tool === tool;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      this.el.wrap.classList.toggle('tool-block', tool === 'block');
+      this.el.hint.textContent = HINT[tool];
+      if (this.mouse) this.hoverAt(this.mouse);
+    }
+    setLayer(name, on) {
+      this.rd.layers[name] = on;
+      const box = document.querySelector(`.mi input[data-layer="${name}"]`);
+      if (box) box.checked = on;
+    }
+    toggleMenu(open) {
+      const m = this.el.layersMenu;
+      const show = open == null ? m.hidden : open;
+      m.hidden = !show;
+      this.el.btnLayers.setAttribute('aria-expanded', String(show));
+    }
+    dropObstruction() {
+      const before = Object.keys(this.sim.obstructions).length;
+      this.sim.spawnAutoObstruction('user');
+      if (Object.keys(this.sim.obstructions).length === before) {
+        this.toast('No segment can be blocked right now without trapping a robot or isolating a station.');
+      }
+    }
+    toggleFull() {
+      const d = document;
+      try {
+        if (!d.fullscreenElement) {
+          const p = d.documentElement.requestFullscreen && d.documentElement.requestFullscreen();
+          if (p && p.catch) p.catch(() => this.toast('Full screen is not available in this view.'));
+        } else if (d.exitFullscreen) d.exitFullscreen();
+      } catch (e) { this.toast('Full screen is not available in this view.'); }
+    }
+    toast(msg, good) {
+      const t = this.el.toast;
+      t.textContent = msg;
+      t.classList.toggle('good', !!good);
+      t.hidden = false;
+      clearTimeout(this.toastTimer);
+      this.toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
+    }
+
+    bindControls() {
+      this.el.btnPlay.addEventListener('click', () => this.setPaused(!this.paused));
+      this.el.speedSel.addEventListener('change', () => { this.speed = Number(this.el.speedSel.value); });
+      document.getElementById('btnFull').addEventListener('click', () => this.toggleFull());
+      document.getElementById('btnObstacle').addEventListener('click', () => this.dropObstruction());
+      document.querySelectorAll('.btn.tool').forEach((b) => b.addEventListener('click', () => this.setTool(b.dataset.tool)));
+      document.getElementById('zoomIn').addEventListener('click', () => { this.rd.zoomBy(1.4); this.updateViewInfo(); });
+      document.getElementById('zoomOut').addEventListener('click', () => { this.rd.zoomBy(1 / 1.4); this.updateViewInfo(); });
+      document.getElementById('zoomFit').addEventListener('click', () => { this.rd.fit(); this.updateViewInfo(); });
+      this.el.btnLayers.addEventListener('click', (e) => { e.stopPropagation(); this.toggleMenu(); });
+      this.el.layersMenu.addEventListener('click', (e) => e.stopPropagation());
+      document.querySelectorAll('.mi input').forEach((b) => b.addEventListener('change', () => this.setLayer(b.dataset.layer, b.checked)));
+      document.addEventListener('click', () => this.toggleMenu(false));
+      document.querySelectorAll('.filter button').forEach((b) => b.addEventListener('click', () => {
+        this.filter = b.dataset.f;
+        document.querySelectorAll('.filter button').forEach((x) => x.classList.toggle('on', x === b));
+        this.renderLog();
+      }));
+    }
+
+    bindKeys() {
+      root.addEventListener('keydown', (e) => {
+        if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const k = e.key.toLowerCase();
+        const onButton = e.target && (e.target.tagName === 'BUTTON' || e.target.getAttribute('role') === 'button');
+        if (k === ' ' && !onButton) { e.preventDefault(); this.setPaused(!this.paused); }
+        else if (k >= '1' && k <= '4') this.setSpeed([0.5, 1, 2, 4][Number(k) - 1]);
+        else if (k === 'v') this.setTool('select');
+        else if (k === 'b') this.setTool('block');
+        else if (k === 'o') this.dropObstruction();
+        else if (k === '+' || k === '=') { this.rd.zoomBy(1.4); this.updateViewInfo(); }
+        else if (k === '-' || k === '_') { this.rd.zoomBy(1 / 1.4); this.updateViewInfo(); }
+        else if (k === '0') { this.rd.fit(); this.updateViewInfo(); }
+        else if (k === 'f') this.toggleFull();
+        else if (k === 'escape') { this.toggleMenu(false); this.select(-1); }
+      });
+    }
+
+    // ------------------------------------------------------------------ map interaction
+    bindMap() {
+      const cv = this.el.canvas;
+      const pos = (e) => { const b = cv.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
+      let down = null;
+      cv.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        down = { p: pos(e), last: pos(e), moved: false, id: e.pointerId };
+        cv.setPointerCapture(e.pointerId);
+      });
+      cv.addEventListener('pointermove', (e) => {
+        const p = pos(e);
+        this.mouse = p;
+        if (down) {
+          if (!down.moved && Math.hypot(p.x - down.p.x, p.y - down.p.y) > 4) {
+            down.moved = true;
+            this.el.wrap.classList.add('panning');
+            this.el.tip.hidden = true;
+          }
+          if (down.moved) {
+            this.rd.panBy(p.x - down.last.x, p.y - down.last.y);
+            down.last = p;
+            this.updateViewInfo();
+          }
+        } else this.hoverAt(p);
+        const w = this.rd.toWorld(p.x, p.y);
+        this.el.cursorPos.textContent = `X ${toM(w.x - Wd.WALL.x0).toFixed(2)}  Y ${toM(w.y - Wd.WALL.y0).toFixed(2)} m`;
+      });
+      cv.addEventListener('pointerup', (e) => {
+        if (!down) return;
+        const click = !down.moved;
+        this.el.wrap.classList.remove('panning');
+        down = null;
+        if (click) this.clickAt(pos(e));
+      });
+      cv.addEventListener('pointercancel', () => { down = null; this.el.wrap.classList.remove('panning'); });
+      cv.addEventListener('pointerleave', () => {
+        if (down) return;
+        this.mouse = null;
+        this.rd.hover = null;
+        this.el.tip.hidden = true;
+        this.el.cursorPos.textContent = 'X –  Y –';
+      });
+      cv.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const p = pos(e);
+        this.rd.zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015));
+        this.updateViewInfo();
+      }, { passive: false });
+      cv.addEventListener('dblclick', (e) => {
+        const p = pos(e);
+        this.rd.zoomAt(p.x, p.y, 1.8);
+        this.updateViewInfo();
+      });
+    }
+
+    clickAt(p) {
+      const hit = this.rd.pick(p.x, p.y);
+      if (this.rd.tool === 'block') {
+        if (hit && hit.edge) {
+          const res = this.sim.toggleObstruction(hit.edge);
+          if (!res.ok) this.toast(res.msg);
+          else if (res.cleared) this.toast(Wd.edgeMap[hit.edge].name + ' reopened', true);
+        } else this.toast('Pick a path segment between two nodes to block it.');
+        this.hoverAt(p);
+        return;
+      }
+      if (hit && hit.robot != null) this.select(this.rd.selected === hit.robot ? -1 : hit.robot);
+      else if (hit && hit.station) {
+        const docked = this.sim.robots.find((r) => r.station === hit.station);
+        const owner = this.rd.stationTarget(hit.station);
+        const r = docked || (owner && owner.r);
+        if (r) this.select(r.i);
+      } else if (!hit) this.select(-1);
+    }
+
+    hoverAt(p) {
+      let hit = this.rd.pick(p.x, p.y);
+      if (this.rd.tool === 'block' && hit && !hit.edge) hit = null;
+      this.rd.hover = hit && hit.robot == null ? hit : null;
+      const tip = this.el.tip;
+      if (!hit) { tip.hidden = true; this.el.canvas.style.cursor = ''; return; }
+      this.el.canvas.style.cursor = this.rd.tool === 'select' && (hit.robot != null || hit.station) ? 'pointer' : '';
+      tip.innerHTML = this.tipHTML(hit);
+      tip.hidden = false;
+      const W = this.el.wrap.clientWidth, H = this.el.wrap.clientHeight;
+      let x = p.x + 14, y = p.y + 16;
+      if (x + tip.offsetWidth > W - 6) x = p.x - tip.offsetWidth - 10;
+      if (y + tip.offsetHeight > H - 6) y = p.y - tip.offsetHeight - 10;
+      tip.style.left = Math.max(6, x) + 'px';
+      tip.style.top = Math.max(6, y) + 'px';
+    }
+
+    tipHTML(hit) {
+      const sim = this.sim;
+      if (hit.robot != null) {
+        const r = sim.robots[hit.robot], st = sim.status(r);
+        return `<b>${r.id}</b> · ${esc(st.label)}<span class="k">${esc(st.text)}</span><span class="a">Click to inspect</span>`;
+      }
+      if (hit.station) {
+        const def = Wd.stationMap[hit.station], S = sim.stations[hit.station];
+        const zone = (Wd.zoneNames && Wd.zoneNames[def.zone]) || 'Station';
+        const docked = sim.robots.find((r) => r.station === hit.station);
+        const tg = this.rd.stationTarget(hit.station);
+        let state = 'Available';
+        if (docked && (docked.mode === 'loading' || docked.mode === 'unloading')) state = `${docked.id} ${docked.mode}`;
+        else if (docked) state = `${docked.id} parked`;
+        else if (tg) state = `${tg.kind === 'Pick' ? 'Pickup' : 'Drop-off'} for ${tg.r.id} (${tg.r.task.id})`;
+        else if (S.obj && S.obj.state === 'waiting') state = `Payload waiting (${S.obj.task}, queued)`;
+        else if (S.res) state = `Reserved by ${S.res}`;
+        return `<b>${hit.station}</b> · ${zone}<span class="k">${esc(state)}</span>`;
+      }
+      const e = Wd.edgeMap[hit.edge];
+      const o = sim.obstructions[hit.edge];
+      const eh = sim.edgeHold[hit.edge];
+      let state = 'Free';
+      if (o) state = o.state === 'closing' ? 'Closing after current traffic' : `Blocked, ${Math.max(0, Math.ceil(o.until - sim.t))} s left`;
+      else if (eh && eh.set.size) state = 'Reserved by ' + [...eh.set].map((i) => sim.robots[i].id).join(', ');
+      const action = this.rd.tool === 'block' ? (o ? 'Click to reopen' : 'Click to block for 25 s') : 'Use Block segment to close it';
+      return `<b>${esc(e.name)}</b><span class="k">${esc(state)} · ${toM(e.len).toFixed(1)} m</span><span class="a">${action}</span>`;
+    }
+
+    updateViewInfo() {
+      this.el.zoomPct.textContent = Math.round(this.rd.k * 100) + '%';
+      this.el.scaleBar.style.width = Math.round(5 * Wd.UNITS_PER_M * this.rd.scale) + 'px';
+    }
+
+    frame(now) {
+      this.updateLog();
+      if (now >= this.nextPanel) {
+        this.nextPanel = now + 150;
+        this.updateRobots();
+        this.updateTasks();
+        this.updateSummary();
+        this.updateDetail();
+        if (this.mouse && !this.el.wrap.classList.contains('panning')) this.hoverAt(this.mouse);
+      }
+    }
+  }
+
+  WH.UI = UI;
+})(window);
+
+</script>
+<script>
+/*
+ * home.js — instances overview: one card per warehouse layout with a floor-plan preview drawn
+ * from the layout data, plus the "Create instance" tile (UI only in this demo).
+ */
+(function (root) {
+  'use strict';
+  const WH = root.WH;
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  /** Simplified floor plan of a layout, fitted into its canvas. */
+  function drawPreview(canvas, L) {
+    const box = canvas.parentElement.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const dpr = Math.min(2, root.devicePixelRatio || 1);
+    canvas.width = Math.round(box.width * dpr);
+    canvas.height = Math.round(box.height * dpr);
+    const ctx = canvas.getContext('2d');
+    const W = L.WALL, m = 26;
+    const s = Math.min(box.width / (W.x1 - W.x0 + 2 * m), box.height / (W.y1 - W.y0 + 2 * m));
+    const ox = (box.width - (W.x1 - W.x0) * s) / 2 - W.x0 * s;
+    const oy = (box.height - (W.y1 - W.y0) * s) / 2 - W.y0 * s;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#141619';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+    const px = 1 / s;
+    ctx.fillStyle = '#1b1e22';
+    ctx.fillRect(W.x0, W.y0, W.x1 - W.x0, W.y1 - W.y0);
+    // Lanes
+    ctx.strokeStyle = '#262a2f';
+    ctx.lineCap = 'square';
+    for (const e of L.edges) {
+      const A = L.nodeMap[e.a], B = L.nodeMap[e.b];
+      ctx.lineWidth = e.kind === 'spur' ? 64 : L.AISLE;
+      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+    }
+    // Racks and areas
+    for (const rk of L.racks) {
+      ctx.fillStyle = '#2d3238';
+      ctx.fillRect(rk.x0, rk.y0, rk.x1 - rk.x0, rk.y1 - rk.y0);
+    }
+    for (const b of L.bays) { ctx.fillStyle = '#262a2f'; ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); }
+    for (const a of L.areas) {
+      if (a.kind === 'conveyor') {
+        ctx.strokeStyle = '#4b525a';
+        ctx.lineWidth = 14;
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        a.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+        continue;
+      }
+      const w = a.x1 - a.x0, h = a.y1 - a.y0;
+      ctx.fillStyle = a.kind === 'cube' ? '#2d3238' : a.kind === 'cell' ? '#24282d' : '#212529';
+      ctx.fillRect(a.x0, a.y0, w, h);
+      ctx.strokeStyle = '#363b42';
+      ctx.lineWidth = px;
+      ctx.strokeRect(a.x0, a.y0, w, h);
+    }
+    // Path network
+    ctx.strokeStyle = '#3d444c';
+    ctx.lineWidth = px;
+    for (const e of L.edges) {
+      const A = L.nodeMap[e.a], B = L.nodeMap[e.b];
+      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+    }
+    // Stations
+    for (const st of L.stations) {
+      ctx.strokeStyle = '#6a737d';
+      ctx.lineWidth = 1.2 * px;
+      ctx.strokeRect(st.x - 28, st.y - 28, 56, 56);
+    }
+    // Walls and doors
+    ctx.strokeStyle = '#4b525a';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(W.x0 - 4, W.y0 - 4, W.x1 - W.x0 + 8, W.y1 - W.y0 + 8);
+    ctx.fillStyle = '#141619';
+    for (const d of L.doors) {
+      if (d.side === 'top') ctx.fillRect(d.pos - d.w / 2, W.y0 - 9, d.w, 10);
+      else if (d.side === 'bottom') ctx.fillRect(d.pos - d.w / 2, W.y1 - 1, d.w, 10);
+      else if (d.side === 'right') ctx.fillRect(W.x1 - 1, d.pos - d.w / 2, 10, d.w);
+      else ctx.fillRect(W.x0 - 9, d.pos - d.w / 2, 10, d.w);
+    }
+    // Fleet at its start positions
+    for (const r of L.robots) {
+      const st = L.stationMap[r.start];
+      ctx.save();
+      ctx.translate(st.x, st.y);
+      ctx.rotate(Math.atan2(st.dir.y, st.dir.x));
+      ctx.fillStyle = '#4a5058';
+      ctx.fillRect(-24, -17, 48, 34);
+      ctx.fillStyle = r.color;
+      ctx.fillRect(-24, -17, 7, 34);
+      ctx.restore();
+    }
+  }
+
+  function cardHTML(L) {
+    const nodes = L.nodes.filter((n) => n.kind !== 'station').length;
+    const segs = L.edges.filter((e) => e.kind !== 'spur').length;
+    const zones = [...new Set(L.stations.map((s) => L.zoneNames[s.zone]))];
+    return `
+      <a class="inst" href="#${L.slug}" aria-label="Open ${esc(L.name)} (instance ${L.instance})">
+        <div class="inst-thumb" style="aspect-ratio:${L.W} / ${L.H}"><canvas data-layout="${L.id}" aria-hidden="true"></canvas></div>
+        <div class="inst-body">
+          <div class="inst-top"><span class="inst-no">Instance ${L.instance}</span><span class="inst-state"><i class="led ok"></i>Ready</span></div>
+          <h2>${esc(L.name)} <span class="inst-kind">${esc(L.kind)}</span></h2>
+          <p class="inst-sum">${esc(L.summary)}</p>
+          <dl class="inst-meta">
+            <div><dt>Floor</dt><dd>${L.floorM[0].toFixed(1)} × ${L.floorM[1].toFixed(1)} m</dd></div>
+            <div><dt>Robots</dt><dd>${L.robots.length}</dd></div>
+            <div><dt>Stations</dt><dd>${L.stations.length}</dd></div>
+            <div><dt>Nodes · path segments</dt><dd>${nodes} · ${segs}</dd></div>
+          </dl>
+          <p class="inst-zones">${zones.map((z) => `<span>${esc(z)}</span>`).join('')}</p>
+        </div>
+        <div class="inst-foot"><span>Open console</span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></div>
+      </a>`;
+  }
+
+  class Home {
+    constructor(el) {
+      this.el = el;
+      this.grid = el.querySelector('#instGrid');
+      const create = this.grid.querySelector('.inst-new');
+      this.grid.insertAdjacentHTML('afterbegin', WH.layoutList.map(cardHTML).join(''));
+      this.grid.appendChild(create);
+      document.getElementById('instCount').textContent = `${WH.layoutList.length} instances`;
+      this.draw();
+      let pending = false;
+      const redraw = () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; this.draw(); });
+      };
+      if (root.ResizeObserver) new ResizeObserver(redraw).observe(this.grid);
+      else root.addEventListener('resize', redraw);
+    }
+    draw() {
+      this.grid.querySelectorAll('canvas[data-layout]').forEach((cv) => drawPreview(cv, WH.layouts[cv.dataset.layout]));
+    }
+  }
+
+  WH.Home = Home;
+})(window);
+
+</script>
+<script>
+/*
+ * main.js — routes between the instances overview and an instance console (#instance-1,
+ * #instance-2), and boots the console: simulation, renderer, UI and the fixed-step loop.
+ */
+(function (root) {
+  'use strict';
+  const WH = root.WH;
+  // Each instance runs its own layout and fleet, so moving between views reloads the page.
+  root.addEventListener('hashchange', () => root.location.reload());
+
+  const home = document.getElementById('home');
+  const appEl = document.getElementById('app');
+  if (WH.route.view === 'home') {
+    document.body.classList.add('is-home');
+    home.hidden = false;
+    appEl.hidden = true;
+    new WH.Home(home);
+    return;
+  }
+  home.hidden = true;
+  appEl.hidden = false;
+  const L = WH.world;
+  document.title = `${L.name} · EdgeFleet`;
+  document.getElementById('crumbName').textContent = L.name;
+  document.getElementById('crumbInst').textContent = 'Instance ' + L.instance;
+  document.getElementById('mapRev').textContent = 'rev ' + L.rev;
+  document.getElementById('map').setAttribute('aria-label',
+    `Floor map of ${L.name} (${L.kind.toLowerCase()}): ${L.robots.length} robots move payloads between ${L.stations.length} stations, reserving path segments and negotiating right of way`);
+
+  const sim = new WH.Sim({});
+  const canvas = document.getElementById('map');
+  const renderer = new WH.Renderer(canvas, sim);
+  const ui = new WH.UI(sim, renderer);
+  WH.app = { sim, renderer, ui };
+
+  // Re-render the cached floor plan once the label fonts are available.
+  if (document.fonts && document.fonts.load) {
+    Promise.all([
+      document.fonts.load('500 10px "IBM Plex Sans"'),
+      document.fonts.load('600 11px "IBM Plex Sans"'),
+      document.fonts.load('500 10px "IBM Plex Mono"'),
+      document.fonts.load('600 11px "IBM Plex Mono"'),
+    ]).catch(() => {}).then(() => renderer.drawStatic());
+  }
+
+  let pending = false;
+  const onResize = () => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; renderer.resize(); ui.updateViewInfo(); });
+  };
+  if (root.ResizeObserver) new ResizeObserver(onResize).observe(document.getElementById('canvasWrap'));
+  else root.addEventListener('resize', onResize);
+
+  const STEP = 1 / 120;
+  // Warm up a few seconds so the first frame already shows tasks assigned and robots moving,
+  // and paint it immediately (the page must look complete even before animation frames run).
+  for (let i = 0; i < 5.5 / STEP; i++) sim.step(STEP);
+  renderer.draw();
+  ui.frame(performance.now());
+  WH.app.advance = (seconds) => {
+    for (let i = 0; i < seconds / STEP; i++) sim.step(STEP);
+    renderer.draw();
+    ui.frame(performance.now() + 1e6);
+  };
+
+  let last = performance.now(), acc = 0;
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    if (!ui.paused) {
+      acc += dt * ui.speed;
+      let n = 0;
+      while (acc >= STEP && n < 600) { sim.step(STEP); acc -= STEP; n++; }
+      if (n >= 600) acc = 0;
+    }
+    renderer.draw();
+    ui.frame(now);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame((t) => { last = t; frame(t); });
+})(window);
+
+</script>
+</body>
+
+</html>

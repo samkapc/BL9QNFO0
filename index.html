@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>EdgeFleet Warehouse Twin</title>
+  <meta name="description"
+    content="Fleet console for three autonomous mobile robots moving payloads between 16 warehouse stations with decentralized, collision-free coordination.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <!--APP-START-->
+  <div class="home" id="home">
+    <header class="topbar">
+      <a class="brand" href="#">
+        <svg class="logo" viewBox="0 0 20 20" aria-hidden="true">
+          <rect width="20" height="20" rx="3" fill="#2f6fd6" />
+          <path d="M5.5 6h6.5M5.5 10h9M5.5 14h6.5" stroke="#fff" stroke-width="1.9" stroke-linecap="round" />
+        </svg>
+        <span class="product">EdgeFleet</span>
+      </a>
+      <nav class="crumbs" aria-label="Location"><span>Site DC-02</span><span class="sep">/</span><span
+          class="cur">Instances</span></nav>
+      <div class="spacer"></div>
+      <div class="status-items">
+        <span class="si"><i class="led ok"></i>Coordination stack online</span>
+        <span class="si" id="instCount">– instances</span>
+      </div>
+    </header>
+
+    <main class="home-main">
+      <div class="home-head">
+        <h1>Instances</h1>
+        <p class="lead">Each instance is a digital twin of one warehouse layout. Three AMRs move payloads between its
+          16 stations and negotiate right of way with each other directly, with no central traffic controller.</p>
+      </div>
+      <div class="inst-grid" id="instGrid">
+        <button class="inst-new" type="button">
+          <span class="plus" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+          </span>
+          <span class="t">Create instance</span>
+          <span class="s">Start from a floor plan, a path network and a robot fleet</span>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <div class="app" id="app" hidden>
+    <header class="topbar">
+      <a class="brand" href="#" title="All instances">
+        <svg class="logo" viewBox="0 0 20 20" aria-hidden="true">
+          <rect width="20" height="20" rx="3" fill="#2f6fd6" />
+          <path d="M5.5 6h6.5M5.5 10h9M5.5 14h6.5" stroke="#fff" stroke-width="1.9" stroke-linecap="round" />
+        </svg>
+        <span class="product">EdgeFleet</span>
+      </a>
+      <nav class="crumbs" aria-label="Location"><a href="#">Instances</a><span class="sep">/</span><span class="cur"
+          id="crumbName">Bay 01</span><span class="inst-tag" id="crumbInst">Instance 1</span></nav>
+      <!-- <span class="mode">Simulation</span> -->
+      <div class="spacer"></div>
+      <div class="status-items">
+        <span class="si"><i class="led ok"></i>V2V mesh</span>
+        <span class="si">Robots <b>3/3</b></span>
+        <span class="si">Sim time <b class="mono" id="clock">--:--:--</b></span>
+      </div>
+      <div class="playback">
+        <button class="btn icon" id="btnPlay" type="button" aria-label="Pause simulation" title="Pause (Space)">
+          <svg id="icoPause" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <rect x="4" y="3" width="3" height="10" rx="0.5" />
+            <rect x="9" y="3" width="3" height="10" rx="0.5" />
+          </svg>
+          <svg id="icoPlay" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" hidden>
+            <path d="M5 3v10l8-5z" />
+          </svg>
+        </button>
+        <label class="sel" title="Simulation speed (1–4)">
+          <span class="vh">Simulation speed</span>
+          <select id="speedSel">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
+        <button class="btn icon" id="btnFull" type="button" aria-label="Full screen" title="Full screen (F)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+            aria-hidden="true">
+            <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="mapview" aria-label="Floor map">
+        <div class="toolbar">
+          <div class="group" role="group" aria-label="Map tool">
+            <button class="btn tool on" type="button" data-tool="select" aria-pressed="true" title="Select and pan (V)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
+                aria-hidden="true">
+                <path d="M3.5 2.5 12 8l-3.8.9L6.3 12.8z" />
+              </svg><span>Select</span>
+            </button>
+            <button class="btn tool" type="button" data-tool="block" aria-pressed="false"
+              title="Block or reopen a segment (B)">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <circle cx="8" cy="8" r="5.5" />
+                <path d="m4.2 4.2 7.6 7.6" />
+              </svg><span>Block segment</span>
+            </button>
+          </div>
+          <button class="btn" id="btnObstacle" type="button" title="Block a segment on an active route (O)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
+              aria-hidden="true">
+              <path d="M8 2.5 14 13H2z" />
+              <path d="M8 6.5v3M8 11.2v.1" />
+            </svg><span>Random obstruction</span>
+          </button>
+          <span class="vsep"></span>
+          <div class="group" role="group" aria-label="Zoom">
+            <button class="btn icon" id="zoomOut" type="button" aria-label="Zoom out" title="Zoom out (−)"><svg
+                viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                aria-hidden="true">
+                <path d="M4 8h8" />
+              </svg></button>
+            <button class="btn icon" id="zoomIn" type="button" aria-label="Zoom in" title="Zoom in (+)"><svg
+                viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                aria-hidden="true">
+                <path d="M4 8h8M8 4v8" />
+              </svg></button>
+            <button class="btn icon" id="zoomFit" type="button" aria-label="Fit map to view"
+              title="Fit to view (0)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                stroke-linecap="round" aria-hidden="true">
+                <path d="M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3" />
+                <rect x="5.5" y="5.5" width="5" height="5" />
+              </svg></button>
+          </div>
+          <div class="menu-wrap">
+            <button class="btn" id="btnLayers" type="button" aria-expanded="false" aria-controls="layersMenu">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
+                aria-hidden="true">
+                <path d="M8 2 14 5.2 8 8.4 2 5.2z" />
+                <path d="m2 8 6 3.2L14 8" />
+                <path d="m2 10.8 6 3.2 6-3.2" />
+              </svg><span>Layers</span>
+              <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                aria-hidden="true">
+                <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
+              </svg>
+            </button>
+            <div class="menu" id="layersMenu" role="menu" hidden>
+              <label class="mi"><input type="checkbox" id="lyPaths" data-layer="paths" checked><span>Planned
+                  paths</span><i class="key k-path"></i></label>
+              <label class="mi"><input type="checkbox" id="lyRes" data-layer="reservations" checked><span>Reserved
+                  segments</span><i class="key k-res"></i></label>
+              <label class="mi"><input type="checkbox" id="lyComms" data-layer="comms" checked><span>V2V
+                  messages</span><i class="key k-v2v"></i></label>
+              <label class="mi"><input type="checkbox" id="lySafety" data-layer="safety"><span>Scanner safety
+                  fields</span><i class="key k-safe"></i></label>
+              <label class="mi"><input type="checkbox" id="lyLabels" data-layer="labels" checked><span>Labels</span><i
+                  class="key k-lbl">A1</i></label>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <span class="map-title">Floor plan <span class="dim" id="mapRev">rev 7</span></span>
+        </div>
+
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="map" role="img"
+            aria-label="Floor map of Bay 01: three robots move payloads between 16 stations, reserving path segments and negotiating right of way"></canvas>
+          <div class="tip" id="tip" hidden></div>
+          <div class="toast" id="toast" role="status" hidden></div>
+        </div>
+
+        <footer class="statusline">
+          <span class="hint" id="toolHint">Click a robot or station to inspect it. Drag to pan, scroll to zoom.</span>
+          <span class="spacer"></span>
+          <span class="legend" aria-label="Robot status lights">
+            <span><i class="sw" style="background:var(--ok)"></i>Driving</span>
+            <span><i class="sw" style="background:var(--warn)"></i>Waiting</span>
+            <span><i class="sw" style="background:var(--info)"></i>Loading</span>
+            <span><i class="sw" style="background:var(--idle)"></i>Idle</span>
+          </span>
+          <span class="mono coord" id="cursorPos">X – Y –</span>
+          <span class="scale"><i id="scaleBar"></i><span class="mono">5 m</span></span>
+          <span class="mono" id="zoomPct">100%</span>
+        </footer>
+      </section>
+
+      <aside class="inspector" aria-label="Fleet inspector">
+        <section class="sec">
+          <header class="sec-head">
+            <h2>Robots</h2><span class="meta">3 online</span>
+          </header>
+          <div class="table robots">
+            <div class="thead"><span>Robot</span><span>State</span><span>Task</span><span class="r">Load</span></div>
+            <div id="robotRows"></div>
+          </div>
+          <div class="detail" id="robotDetail" hidden></div>
+        </section>
+
+        <section class="sec">
+          <header class="sec-head">
+            <h2>Summary</h2><span class="meta">this session</span>
+          </header>
+          <dl class="kpis">
+            <div>
+              <dt>Delivered</dt>
+              <dd id="kDel">0</dd>
+            </div>
+            <div>
+              <dt>Throughput</dt>
+              <dd><span id="kThr">–</span><small> /min</small></dd>
+            </div>
+            <div>
+              <dt>Active tasks</dt>
+              <dd id="kAct">0</dd>
+            </div>
+            <div>
+              <dt>Conflicts resolved</dt>
+              <dd id="kCon">0</dd>
+            </div>
+            <div>
+              <dt>Reroutes</dt>
+              <dd id="kRer">0</dd>
+            </div>
+            <div>
+              <dt>Collisions</dt>
+              <dd id="kCol">0</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="sec">
+          <header class="sec-head">
+            <h2>Tasks</h2><span class="meta" id="taskMeta">–</span>
+          </header>
+          <div class="table tasks">
+            <div class="thead"><span>ID</span><span>From</span><span>To</span><span>Robot</span><span>Status</span>
+            </div>
+            <div id="taskRows"></div>
+          </div>
+        </section>
+
+        <section class="sec grow">
+          <header class="sec-head">
+            <h2>Event log</h2>
+            <div class="filter" role="group" aria-label="Filter events">
+              <button type="button" class="on" data-f="all">All</button>
+              <button type="button" data-f="traffic">Traffic</button>
+              <button type="button" data-f="tasks">Tasks</button>
+            </div>
+          </header>
+          <div class="log" id="log" tabindex="0" aria-label="Event log"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+  <!--APP-END-->
+  <script src="js/world.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/home.js"></script>
+  <script src="js/main.js"></script>
+</body>
+
+</html>
