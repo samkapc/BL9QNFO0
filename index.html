@@ -171,14 +171,14 @@
             </div>
           </div>
           <div class="group" role="group" aria-label="Floor plan style">
-            <button class="btn icon theme on" type="button" data-theme="dark" aria-pressed="true"
+            <button class="btn icon theme" type="button" data-theme="dark" aria-pressed="false"
               aria-label="Dark floor plan" title="Dark floor plan (L)">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"
                 aria-hidden="true">
                 <path d="M13 9.6A5.5 5.5 0 1 1 6.4 3a4.3 4.3 0 0 0 6.6 6.6z" />
               </svg>
             </button>
-            <button class="btn icon theme" type="button" data-theme="light" aria-pressed="false"
+            <button class="btn icon theme on" type="button" data-theme="light" aria-pressed="true"
               aria-label="Light floor plan" title="Light floor plan (L)">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
                 aria-hidden="true">
@@ -192,7 +192,7 @@
           <span class="map-title">Floor plan <span class="dim" id="mapRev">rev 7</span></span>
         </div>
 
-        <div class="canvas-wrap" id="canvasWrap">
+        <div class="canvas-wrap light" id="canvasWrap">
           <canvas id="map" role="img"
             aria-label="Floor map of Bay 01: three robots move payloads between 16 stations, reserving path segments and negotiating right of way"></canvas>
           <div class="tip" id="tip" hidden></div>

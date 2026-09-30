@@ -63,7 +63,8 @@
 
   // ---- Pedestrians ---------------------------------------------------------------------------
   // People walk on their own network: painted walkways, work spots, and zebra crosswalks where a
-  // walkway crosses a robot lane (detected automatically from the lane geometry).
+  // walkway crosses a robot lane (detected automatically from the lane geometry). The aisles are
+  // shared too: some people walk the robot lanes themselves (see laneWalks).
   function pointSegDist(px, py, A, B) {
     const dx = B.x - A.x, dy = B.y - A.y, l2 = dx * dx + dy * dy;
     const t = l2 ? Math.max(0, Math.min(1, ((px - A.x) * dx + (py - A.y) * dy) / l2)) : 0;
@@ -73,15 +74,18 @@
     const P = { nodes: Object.create(null), list: [], edges: [], adj: Object.create(null), walkers: spec.walkers };
     for (const [id, x, y, opt] of spec.nodes) {
       const n = { id, x, y, spot: !!(opt && opt.spot), face: opt && opt.face != null ? opt.face : null };
+      if (opt && opt.box) n.box = opt.box;       // robot intersection: only entered when clear
+      if (opt && opt.side) n.side = opt.side;    // lane work spot: stand aside on this side
       P.nodes[id] = n;
       P.list.push(n);
       P.adj[id] = [];
     }
     for (const [a, b, opt] of spec.edges) {
       const A = P.nodes[a], B = P.nodes[b];
-      const e = { a, b, len: Math.hypot(B.x - A.x, B.y - A.y), vis: !(opt && opt.hidden), cross: null };
+      const e = { a, b, len: Math.hypot(B.x - A.x, B.y - A.y), vis: !(opt && opt.hidden), cross: null, lane: null };
+      if (opt && opt.lane) { e.lane = opt.lane; e.vis = false; }
       const steps = Math.ceil(e.len / 4);
-      for (const re of L.edges) {
+      for (const re of e.lane ? [] : L.edges) {
         const half = re.kind === 'spur' ? 32 : HALF;
         const RA = L.nodeMap[re.a], RB = L.nodeMap[re.b];
         for (let k = 0; k <= steps && !e.cross; k++) {
@@ -96,6 +100,33 @@
     }
     L.peds = P;
     return L;
+  }
+  // Shared aisles: a walking network along every robot lane centreline. Its nodes at robot
+  // intersections are "boxes" people cross only when no robot is in or about to enter them;
+  // spots are rack-face work positions where a person stands aside at the lane edge.
+  //   spots: [id, nodeA, nodeB, distance from nodeA, side [x, y]]
+  function laneWalks(L, peds, spots) {
+    const byEdge = Object.create(null);
+    for (const [id, a, b, d, side] of spots) {
+      const e = L.edgeBetween(a, b);
+      (byEdge[e.id] = byEdge[e.id] || []).push({ id, t: e.a === a ? d : e.len - d, side });
+    }
+    const lanes = L.edges.filter((e) => e.kind !== 'spur');
+    const used = new Set();
+    lanes.forEach((e) => { used.add(e.a); used.add(e.b); });
+    used.forEach((id) => { const N = L.nodeMap[id]; peds.nodes.push(['L' + id, N.x, N.y, { box: id }]); });
+    for (const e of lanes) {
+      const A = L.nodeMap[e.a], B = L.nodeMap[e.b];
+      const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len;
+      let prev = 'L' + e.a;
+      for (const s of (byEdge[e.id] || []).sort((p, q) => p.t - q.t)) {
+        peds.nodes.push([s.id, A.x + ux * s.t, A.y + uy * s.t, { spot: true, side: s.side, face: Math.atan2(s.side[1], s.side[0]) }]);
+        peds.edges.push([prev, s.id, { lane: e.id }]);
+        prev = s.id;
+      }
+      peds.edges.push([prev, 'L' + e.b, { lane: e.id }]);
+    }
+    return spots.map((s) => s[0]);
   }
 
   // ======================================================================== Instance 1 · Bay 01
@@ -198,10 +229,20 @@
       const n = peds.nodes.find((q) => q[0] === id);
       return n[3].spot && test(n[1]);
     });
+    // Shared aisles: a supervisor and an auditor walk the robot lanes between rack faces
+    const W = [-1, 0], E = [1, 0], N = [0, -1], S = [0, 1];
+    const lane = laneWalks(L, peds, [
+      ['la1', 'A1', 'J05', 75, W], ['la2', 'A2', 'J06', 75, W], ['la3', 'J06', 'B2', 75, E], ['la4', 'J07', 'B3', 75, E],
+      ['la5', 'B1', 'J09', 75, E], ['la6', 'B3', 'J11', 75, W], ['la7', 'J12', 'C4', 75, E], ['la8', 'A4', 'J08', 75, W],
+      ['lc1', 'A1', 'A2', 180, S], ['lc2', 'B1', 'B2', 180, N], ['lc3', 'B2', 'B3', 180, S], ['lc4', 'B3', 'B4', 180, N],
+      ['lc5', 'C2', 'C3', 180, N], ['lc6', 'A3', 'A4', 180, S],
+    ]);
     peds.walkers = [
       { id: 'P1', role: 'Dock operator', vest: '#d8e02a', hat: '#f2f2ee', home: spotsOf(north, (x) => x < 800) },
       { id: 'P2', role: 'Dock operator', vest: '#f08a24', hat: '#f2c230', home: spotsOf(north, (x) => x > 800) },
       { id: 'P3', role: 'Shipping clerk', vest: '#d8e02a', hat: '#3b6fd1', home: spotsOf(south, () => true) },
+      { id: 'P4', role: 'Shift supervisor', vest: '#f08a24', hat: '#f2f2ee', home: lane },
+      { id: 'P5', role: 'Inventory auditor', vest: '#d8e02a', hat: '#2f9e62', home: lane.filter((id) => id[1] === 'a') },
     ];
     return addPeds(L, peds);
   }
@@ -351,6 +392,14 @@
     [1400, 1480, 1560, 1640, 1728].forEach((x, i) => node('fs' + i, x, 838, { spot: true, face: fD }));
     walk(['fs0', 'fs1', 'fs2', 'fs3', 'fs4']);
 
+    // Shared aisles: a supervisor and an auditor walk the robot lanes themselves
+    const lane = laneWalks(L, { nodes: pn, edges: pe }, [
+      ['lm1', 'M6', 'M7', 140, [0, 1]], ['lm2', 'M7', 'M8', 140, [0, 1]],
+      ['lh1', 'H1', 'H2', 140, [0, 1]], ['lh2', 'H4', 'H5', 150, [0, -1]],
+      ['la1', 'N2', 'M4', 200, [1, 0]], ['la2', 'N2', 'M4', 330, [-1, 0]],
+      ['lb1', 'B1', 'B2', 235, [0, -1]], ['lb2', 'B1', 'B2', 387, [0, -1]],
+      ['lw1', 'W1', 'B1', 200, [1, 0]], ['lw2', 'N1', 'W1', 240, [1, 0]],
+    ]);
     const spots = (re) => pn.filter((q) => q[3] && q[3].spot && re.test(q[0])).map((q) => q[0]);
     return addPeds(L, {
       nodes: pn, edges: pe,
@@ -359,6 +408,8 @@
         { id: 'P2', role: 'Packer', vest: '#f08a24', hat: '#f2c230', home: spots(/^pc/) },
         { id: 'P3', role: 'Staging operator', vest: '#d8e02a', hat: '#3b6fd1', home: spots(/^s[a-f]$/) },
         { id: 'P4', role: 'Stock checker', vest: '#f08a24', hat: '#f2f2ee', home: spots(/^fs/) },
+        { id: 'P5', role: 'Shift supervisor', vest: '#f08a24', hat: '#f2f2ee', home: lane },
+        { id: 'P6', role: 'Inventory auditor', vest: '#d8e02a', hat: '#2f9e62', home: lane.filter((id) => /^l[abw]/.test(id)) },
       ],
     });
   }

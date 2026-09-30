@@ -40,6 +40,14 @@
     pedWarn: 58,         // warning field: slow down when a person is this close to the path
     pedSlow: 50,         // speed cap inside the warning field (≈ 1 m/s)
     crossClear: 42,      // a crosswalk is clear when no robot is within this distance of it
+    pedKeep: 12,         // people walking a shared aisle keep a little right of the centre line
+    pedAside: 40,        // ... and step aside to this offset (the lane edge) to let a robot by
+    pedStep: 75,         // sideways stepping speed
+    pedSee: 46,          // people step aside for a robot whose path comes within this distance
+    pedPass: 34,         // robots pass a person standing aside if the path stays this far away
+    pedCreep: 30,        // passing speed next to a person in a shared aisle (0.6 m/s)
+    boxLen: 58,          // people wait this far before a robot intersection until it is clear
+    rotClear: 43,        // a robot holds an in-place turn while a person is this close
     unitsPerM: Wd.UNITS_PER_M,
   };
 
@@ -79,6 +87,11 @@
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
     const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
     return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+  }
+  function segsDist(px, py, segs) {
+    let d = Infinity;
+    for (const g of segs) d = Math.min(d, pointSeg(px, py, g[0], g[1], g[2], g[3]));
+    return d;
   }
   /** Distance from a point to a robot's rectangular footprint (0 when inside). */
   function footprintDist(r, px, py) {
@@ -124,6 +137,7 @@
       this.stats = {
         deliveries: 0, collisions: 0, conflicts: 0, yields: 0, reroutes: 0,
         negotiations: 0, deadlocks: 0, minSep: Infinity, tasksCreated: 0, pedStops: 0, minPedSep: Infinity,
+        pedWaits: 0, laneAsides: 0, boxWaits: 0, rotHolds: 0,
       };
       this.negotiated = Object.create(null);
       this.nextIntent = 0.6;
@@ -151,7 +165,7 @@
         replanCD: 0, lastReroute: -99, rerouteText: '', pendingReplan: null, needRoute: false,
         expectHold: null,
         beacon: 0.4 + i * 0.8,
-        humanStop: -1, humanNear: false,
+        humanStop: -1, humanNear: false, humanPass: false, pedCap: Infinity, rotHold: false,
       };
       this.holdNode(r, st.id);
       return r;
@@ -1009,6 +1023,11 @@
     move(r, dt) {
       r.follow = -1;
       if (r.motion === 'rotate') {
+        // Hold an in-place turn while a person is within reach of the robot's swinging corners
+        const hold = this.humans.some((h) => Math.abs(h.x - r.x) < CFG.rotClear && Math.hypot(h.x - r.x, h.y - r.y) < CFG.rotClear);
+        if (hold && !r.rotHold) this.stats.rotHolds++;
+        r.rotHold = hold;
+        if (hold) { r.w = 0; r.v = 0; return; }
         const diff = G.angDiff(r.targetH, r.h);
         const wLim = Math.min(CFG.omegaMax, Math.sqrt(2 * CFG.alpha * Math.abs(diff)));
         r.w += clamp(Math.sign(diff) * wLim - r.w, -CFG.alpha * dt, CFG.alpha * dt);
@@ -1019,12 +1038,15 @@
         r.v = 0;
         return;
       }
-      if (r.motion !== 'drive' || !r.route) { r.v = 0; r.humanStop = -1; r.humanNear = false; return; }
+      r.rotHold = false;
+      if (r.motion !== 'drive' || !r.route) { r.v = 0; r.humanStop = -1; r.humanNear = false; r.humanPass = false; return; }
       const R = r.route, geo = R.geo;
       let stopS = geo.length;
       const gi = R.idx + R.granted;
       if (gi < R.nodes.length) stopS = Math.min(stopS, R.nodeS[gi] - CFG.stopDist);
       r.humanNear = false;
+      r.humanPass = false;
+      r.pedCap = Infinity;
       const sf = this.safetyStop(r, stopS);
       let pedStop = -1;
       if (sf && sf.s < stopS) {
@@ -1033,8 +1055,8 @@
       }
       const d = stopS - r.s;
       let vLim = Math.min(CFG.vMax, Math.sqrt(2 * CFG.decel * Math.max(0, d)));
-      // Scanner warning field: slow down while a person is close to the path ahead
-      if (r.humanNear) vLim = Math.min(vLim, CFG.pedSlow);
+      // Scanner warning field: slow down near a person (braking curve set in safetyStop)
+      vLim = Math.min(vLim, r.pedCap);
       for (const c of geo.corners) {
         if (c.s1 < r.s) continue;
         if (c.s0 > r.s + 160) break;
@@ -1056,11 +1078,13 @@
       if (stoppedForPed && r.humanStop < 0) {
         const h = this.humans[pedStop];
         const cw = h.path && h.edges[h.k] && h.edges[h.k].cross;
+        const box = h.inBox && Wd.peds.nodes[h.inBox].box;
         this.stats.pedStops++;
         const ce = R.idx < R.nodes.length ? Wd.edgeBetween(r.prev, R.nodes[R.idx]) : null;
         this.emit('safety', cw
           ? [{ r: r.i }, ' stopped for a person on the crosswalk at ', { e: cw }]
-          : [{ r: r.i }, ' stopped: person in its path', ce ? ' on ' : '', ce ? { e: ce.id } : ''],
+          : box ? [{ r: r.i }, ` stopped for ${h.id} crossing intersection `, { n: box }]
+            : [{ r: r.i }, ` stopped: ${h.id} in its path`, ce ? ' on ' : '', ce ? { e: ce.id } : ''],
           'ped|' + r.i, 15);
       }
       r.humanStop = stoppedForPed ? pedStop : -1;
@@ -1085,19 +1109,29 @@
           }
         }
       }
-      // People: the obstacle is where the person is and where they are about to walk
-      // (a person on a crosswalk blocks the rest of that crosswalk). People waiting at the
-      // kerb stand outside the lane and are not treated as obstacles.
+      // People: the obstacle is where the person is and where they are about to walk (a person
+      // on a crosswalk or crossing an intersection blocks the rest of that crossing). Near a
+      // person the robot slows along a braking curve: to walking pace beside a walkway, to a
+      // creep when passing someone standing aside in a shared aisle. It stops for anyone in its
+      // path. People waiting at a kerb stand outside the lane and are not obstacles.
       const lookP = Math.max(look, Math.min(limitS, r.s + 130));
       for (const h of this.humans) {
-        if (h.state === 'wait') continue;
+        if (h.state === 'wait' && !h.onLane) continue;
         const ob = this.humanObstacle(h);
-        const d0 = pointSeg(r.x, r.y, ob.ax, ob.ay, ob.bx, ob.by);
+        const d0 = segsDist(r.x, r.y, ob);
         if (d0 > lookP - r.s + CFG.pedWarn) continue;
+        const stopD = h.clear ? CFG.pedPass : h.inBox ? CFG.pedSafe + 8 : CFG.pedSafe;
+        let warned = false;
         for (let k = k0; k < geo.n && geo.cs[k] <= lookP; k++) {
-          const dq = pointSeg(geo.xs[k], geo.ys[k], ob.ax, ob.ay, ob.bx, ob.by);
-          if (dq < CFG.pedWarn) r.humanNear = true;
-          if (geo.cs[k] <= look && dq < CFG.pedSafe && dq < d0 - 0.05) {
+          const dq = segsDist(geo.xs[k], geo.ys[k], ob);
+          if (!warned && dq < CFG.pedWarn) {
+            warned = true;
+            r.humanNear = true;
+            if (h.onLane) r.humanPass = true;
+            const vc = h.onLane ? CFG.pedCreep : CFG.pedSlow;
+            r.pedCap = Math.min(r.pedCap, Math.sqrt(vc * vc + 2 * CFG.decel * Math.max(0, geo.cs[k] - r.s - 12)));
+          }
+          if (geo.cs[k] <= look && dq < stopD && dq < d0 - 0.05) {
             const s = Math.max(r.s, geo.cs[k - 1]);
             if (!best || s < best.s) best = { s, q: -1, human: h.i };
             break;
@@ -1107,25 +1141,43 @@
       return best;
     }
 
+    /** Where a person is and is about to be, as line segments [x0, y0, x1, y1]. */
     humanObstacle(h) {
-      if (h.state !== 'walk' || !h.path) return { ax: h.x, ay: h.y, bx: h.x, by: h.y };
+      if (h.state !== 'walk' || !h.path) return [[h.x, h.y, h.x, h.y]];
       const e = h.edges[h.k];
       const B = Wd.peds.nodes[h.path[h.k + 1]];
-      if (e.cross) return { ax: h.x, ay: h.y, bx: B.x, by: B.y };
+      if (e.cross) return [[h.x, h.y, B.x, B.y]];
+      if (e.lane && h.inBox) {
+        if (h.inBox === B.id) { const X = this.boxExit(h, h.k + 1); return [[h.x, h.y, B.x, B.y], [B.x, B.y, X.x, X.y]]; }
+        const X = this.boxExit(h, h.k);
+        return [[h.x, h.y, X.x, X.y]];
+      }
       const dx = B.x - h.x, dy = B.y - h.y, l = Math.hypot(dx, dy) || 1, f = Math.min(1, 16 / l);
-      return { ax: h.x, ay: h.y, bx: h.x + dx * f, by: h.y + dy * f };
+      return [[h.x, h.y, h.x + dx * f, h.y + dy * f]];
+    }
+
+    /** The point where the intersection box at the start of path edge k ends (centre line). */
+    boxExit(h, k) {
+      const P = Wd.peds, e = h.edges[k], A = P.nodes[h.path[k]];
+      if (!e) return A;
+      const B = P.nodes[h.path[k + 1]], f = Math.min(1, CFG.boxLen / e.len);
+      return { x: A.x + (B.x - A.x) * f, y: A.y + (B.y - A.y) * f };
     }
 
     // ------------------------------------------------------------------ people
     makeHuman(d, i) {
       const P = Wd.peds;
       const start = P.nodes[d.home[Math.floor(this.rand() * d.home.length)]];
+      const sd = start.side ? CFG.pedAside : 0, sx = start.side ? start.side[0] : 0, sy = start.side ? start.side[1] : 0;
       return {
         i, id: d.id, role: d.role, vest: d.vest, hat: d.hat, home: d.home,
-        x: start.x, y: start.y, h: start.face != null ? start.face : 0, v: 0,
+        x: start.x + sx * sd, y: start.y + sy * sd, h: start.face != null ? start.face : 0, v: 0,
         state: 'dwell', timer: 0.5 + this.rand() * 4, node: start.id, faceH: start.face,
         path: null, edges: null, k: 0, t: 0, phase: this.rand() * 6.28,
         speed: 54 + this.rand() * 14, waitT: 0, goal: null,
+        // shared aisles: lateral offset from the lane centre (+ = right of walking direction),
+        // offset at a lane work spot, intersection being crossed, and who they stand aside for
+        off: 0, doff: sd, inBox: null, onLane: !!start.side, clear: !!start.side, asideFor: -1, asideT: 0, passing: -1,
       };
     }
 
@@ -1140,7 +1192,7 @@
         if (u === to) break;
         done.add(u);
         for (const { to: v, e } of P.adj[u]) {
-          const c = dist[u] + e.len + (e.cross ? 40 : 0);
+          const c = dist[u] + e.len + (e.cross ? 40 : 0) + (e.lane && this.obstructions[e.lane] ? 2000 : 0);
           if (dist[v] === undefined || c < dist[v]) { dist[v] = c; prev[v] = { u, e }; }
         }
       }
@@ -1154,33 +1206,99 @@
       const goal = choices[Math.floor(this.rand() * choices.length)];
       const p = goal && this.pedPath(h.node, goal);
       if (!p || p.nodes.length < 2) { h.timer = 2; return; }
-      h.path = p.nodes; h.edges = p.edges; h.k = 0; h.t = 0; h.goal = goal;
+      h.path = p.nodes; h.edges = p.edges; h.k = 0; h.t = 0; h.goal = goal; h.inBox = null;
       h.state = 'walk';
+      if (p.edges[0].lane) this.projectOnto(h, 0);
+    }
+
+    /** Express the person's position as distance along / offset across path edge k. */
+    projectOnto(h, k) {
+      const P = Wd.peds, e = h.edges[k], A = P.nodes[h.path[k]], B = P.nodes[h.path[k + 1]];
+      const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, dx = h.x - A.x, dy = h.y - A.y;
+      h.t = dx * ux + dy * uy;
+      h.off = dy * ux - dx * uy;
+    }
+
+    dwellTime(h) {
+      const base = { 'Picker': 3.5, 'Packer': 5, 'Inventory auditor': 5, 'Shift supervisor': 3 }[h.role] || 2.5;
+      return base + this.rand() * 4;
     }
 
     /** A person may step onto a crosswalk when no robot is on it and none is about to reach it. */
-    crosswalkClear(A, B) {
+    crosswalkClear(A, B) { return this.zoneClear([[A.x, A.y, B.x, B.y]]); }
+
+    /** ... and into a robot intersection on the same terms (entry → centre → exit). */
+    boxClear(h, e, A, B) {
+      const f = Math.max(0, e.len - CFG.boxLen) / e.len, X = this.boxExit(h, h.k + 1);
+      const ex = A.x + (B.x - A.x) * f, ey = A.y + (B.y - A.y) * f;
+      return this.zoneClear([[ex, ey, B.x, B.y], [B.x, B.y, X.x, X.y]]);
+    }
+
+    zoneClear(segs) {
       for (const r of this.robots) {
-        if (pointSeg(r.x, r.y, A.x, A.y, B.x, B.y) < CFG.crossClear) return false;
+        if (segsDist(r.x, r.y, segs) < CFG.crossClear) return false;
         if (!r.route || r.motion !== 'drive' || r.v < 3) continue;
         const geo = r.route.geo;
         const look = r.s + (r.v * r.v) / (2 * CFG.decel) + 90;
         for (let k = geo.index(r.s) + 1; k < geo.n && geo.cs[k] <= look; k += 2) {
-          if (pointSeg(geo.xs[k], geo.ys[k], A.x, A.y, B.x, B.y) < CFG.crossClear) return false;
+          if (segsDist(geo.xs[k], geo.ys[k], segs) < CFG.crossClear) return false;
         }
       }
       return true;
     }
 
+    /** What a person walking a shared aisle has to react to: a robot heading their way, or a
+     *  standing robot on their walking line ahead (passed at the lane edge). */
+    laneThreat(h, ux, uy, rx, ry) {
+      const out = { moving: -1, stat: -1, side: 0, turning: false };
+      let best = Infinity;
+      for (const r of this.robots) {
+        const dx = r.x - h.x, dy = r.y - h.y, d = Math.hypot(dx, dy);
+        if (d > 300) continue;
+        if (r.motion === 'rotate' && d < 52) out.turning = true;
+        if (r.motion === 'drive' && r.route && r.v > 2) {
+          let hit = d < CFG.pedSee;
+          const geo = r.route.geo, look = r.s + (r.v * r.v) / (2 * CFG.decel) + 110;
+          for (let k = geo.index(r.s) + 1; !hit && k < geo.n && geo.cs[k] <= look; k += 2) {
+            hit = Math.hypot(geo.xs[k] - h.x, geo.ys[k] - h.y) < CFG.pedSee;
+          }
+          if (hit && d < best) { best = d; out.moving = r.i; }
+        } else {
+          // (only a robot standing inside the lane: one on a dock spur is off the walking line)
+          const along = dx * ux + dy * uy, lat = dx * rx + dy * ry, latC = lat + h.off;
+          if (along > -26 && along < 90 && Math.abs(latC) < Wd.HALF + 8) {
+            out.stat = r.i;
+            out.side = latC > 6 ? -1 : latC < -6 ? 1 : 0;
+          }
+        }
+      }
+      return out;
+    }
+
+    robotTurningNear(h) {
+      return this.robots.some((r) => r.motion === 'rotate' && Math.hypot(r.x - h.x, r.y - h.y) < 52);
+    }
+
     humanStatus(h) {
-      if (h.state === 'wait') return 'Waiting at the crosswalk for robot traffic to pass';
+      const P = Wd.peds;
+      if (h.state === 'wait') {
+        return h.onLane ? `Waiting to cross intersection ${P.nodes[h.path[h.k + 1]].box}, robot traffic`
+          : 'Waiting at the crosswalk for robot traffic to pass';
+      }
+      if (h.state === 'aside') return h.asideFor >= 0 ? `Stepped aside for ${this.robots[h.asideFor].id} to pass` : 'Stepped aside for a colleague';
       if (h.state === 'walk') {
         const e = h.edges[h.k];
+        if (e && e.lane) {
+          if (h.inBox) return `Crossing intersection ${P.nodes[h.inBox].box}`;
+          if (h.passing >= 0) return `Keeping to the lane edge past ${this.robots[h.passing].id}`;
+          return `Walking ${Wd.edgeMap[e.lane].name} (shared aisle)`;
+        }
         return e && e.cross && h.t > 0 ? 'Crossing the robot lane on the crosswalk' : 'Walking to the next work spot';
       }
       return {
         'Picker': 'Picking from the rack face', 'Packer': 'Packing at the cell', 'Dock operator': 'Checking staged pallets',
         'Shipping clerk': 'Checking outbound pallets', 'Staging operator': 'Sorting totes', 'Stock checker': 'Counting pallet stock',
+        'Shift supervisor': 'Checking the rack face', 'Inventory auditor': 'Auditing rack locations',
       }[h.role] || 'Working';
     }
 
@@ -1194,20 +1312,17 @@
     updateHumans(dt) {
       const P = Wd.peds;
       for (const h of this.humans) {
-        if (h.state === 'dwell') {
-          h.v = 0;
-          this.turnHuman(h, h.faceH, dt);
-          h.timer -= dt;
-          if (h.timer <= 0) this.pickHumanTarget(h);
-          continue;
-        }
+        if (h.state === 'dwell') { this.dwellHuman(h, dt); continue; }
         const A = P.nodes[h.path[h.k]], B = P.nodes[h.path[h.k + 1]];
         const e = h.edges[h.k];
+        if (e.lane) { this.walkLane(h, dt); continue; }
+        h.onLane = false;
+        h.clear = false;
         const dir = Math.atan2(B.y - A.y, B.x - A.x);
         // Wait at the kerb until the crosswalk is clear; once on it, keep going
         if (e.cross && h.t < 0.01) {
           if (!this.crosswalkClear(A, B)) {
-            if (h.state !== 'wait') this.stats.pedWaits = (this.stats.pedWaits || 0) + 1;
+            if (h.state !== 'wait') this.stats.pedWaits++;
             h.state = 'wait';
             h.v = 0;
             h.waitT += dt;
@@ -1238,7 +1353,7 @@
             h.x = B.x; h.y = B.y;
             h.state = 'dwell';
             h.faceH = B.face != null ? B.face : h.h;
-            h.timer = (h.role === 'Picker' ? 3.5 : h.role === 'Packer' ? 5 : 2.5) + this.rand() * 4;
+            h.timer = this.dwellTime(h);
             h.path = null;
             continue;
           }
@@ -1249,6 +1364,150 @@
         h.y = A2.y + (B2.y - A2.y) * f;
         this.turnHuman(h, Math.atan2(B2.y - A2.y, B2.x - A2.x), dt);
       }
+    }
+
+    dwellHuman(h, dt) {
+      h.v = 0;
+      const N = Wd.peds.nodes[h.node];
+      if (N.side) {
+        // At a rack face in a shared aisle: stand at the lane edge (a step further back while a
+        // robot next to them turns in place)
+        const target = CFG.pedAside + (this.robotTurningNear(h) ? 8 : 0);
+        h.doff += clamp(target - h.doff, -CFG.pedStep * dt, CFG.pedStep * dt);
+        h.x = N.x + N.side[0] * h.doff;
+        h.y = N.y + N.side[1] * h.doff;
+        h.onLane = true;
+        h.clear = h.doff >= CFG.pedAside - 3;
+      } else {
+        h.onLane = false;
+        h.clear = false;
+      }
+      this.turnHuman(h, h.faceH, dt);
+      h.timer -= dt;
+      if (h.timer <= 0) this.pickHumanTarget(h);
+    }
+
+    // Walking a shared aisle: along the lane a little right of the centre line, stepping aside to
+    // the lane edge to let robots by, and entering an intersection only when no robot is in it
+    // or about to enter it. A person never stands still inside the swept path of a lane: they
+    // wait at the lane edge, so a robot is never held up by someone who is waiting for it.
+    walkLane(h, dt) {
+      const P = Wd.peds;
+      const e = h.edges[h.k];
+      const A = P.nodes[h.path[h.k]], B = P.nodes[h.path[h.k + 1]];
+      const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, rx = -uy, ry = ux;
+      const G = P.nodes[h.goal];
+      h.onLane = true;
+      h.passing = -1;
+      if (h.inBox && h.inBox === A.id && h.t >= CFG.boxLen) h.inBox = null;
+      let rest = e.len - h.t;
+      for (let k = h.k + 1; k < h.edges.length; k++) rest += h.edges[k].len;
+      const lastLeg = h.k === h.edges.length - 1;
+      // Step aside to the side they are on (never across the lane); drift to the work spot's side
+      // of the lane only while walking freely
+      const goalSide = lastLeg && G.side ? (G.side[0] * rx + G.side[1] * ry > 0 ? 1 : -1) : 0;
+      let side = h.off < -4 ? -1 : h.off > 4 ? 1 : goalSide || 1;
+      let offT = (goalSide || side) * (goalSide && rest < 90 ? CFG.pedAside : CFG.pedKeep);
+      let vT = h.speed, state = 'walk';
+      // A robot heading their way: stand aside until it has been clear for a moment
+      const th = this.laneThreat(h, ux, uy, rx, ry);
+      if (th.moving >= 0) { h.asideT = 0.7; h.asideFor = th.moving; }
+      else if ((h.asideT -= dt) <= 0) h.asideFor = -1;
+      let give = false;
+      for (const o of this.humans) {
+        if (o.i >= h.i) continue;
+        const dx = o.x - h.x, dy = o.y - h.y;
+        if (dx * dx + dy * dy < 26 * 26 && dx * ux + dy * uy > 0) give = true;
+      }
+      const entry = e.len - CFG.boxLen;
+      const needBox = B.box && h.inBox !== B.id;
+      if (h.inBox) {
+        // Committed to an intersection: cross it on the centre line without stopping
+        offT = 0;
+        vT = h.speed * 1.15;
+      } else if (h.asideFor >= 0 || give) {
+        state = 'aside';
+        vT = 0;
+        offT = side * CFG.pedAside;
+        if (h.asideFor >= 0 && h.state !== 'aside') {
+          this.stats.laneAsides++;
+          this.emit('people', [`${h.id} stepped aside on `, { e: e.lane }, ' to let ', { r: h.asideFor }, ' pass'], 'aside|' + h.i, 25);
+        }
+      } else {
+        if (needBox && h.t >= entry - 25) {
+          if (!th.turning && this.boxClear(h, e, A, B)) {
+            h.inBox = B.id;
+            h.waitT = 0;
+            offT = 0;
+            vT = h.speed * 1.15;
+          } else if (h.t >= entry - 0.5) {
+            state = 'wait';
+            if (h.state !== 'wait') this.stats.boxWaits++;
+            vT = 0;
+            offT = side * CFG.pedAside;
+            h.waitT += dt;
+          } else vT = Math.min(vT, Math.sqrt(2 * 150 * Math.max(0, entry - h.t)));
+        }
+        if (state === 'walk' && !h.inBox && (th.stat >= 0 || this.obstructions[e.lane])) {
+          // A standing robot or a closed corridor ahead: pass it at the lane edge
+          if (th.stat >= 0 && th.side) side = th.side;
+          offT = side * CFG.pedAside;
+          vT = Math.abs(h.off) < CFG.pedAside - 4 ? 0 : Math.min(vT, h.speed * 0.7);
+          h.passing = th.stat;
+        }
+      }
+      if (th.turning && !h.inBox) offT = (offT < 0 ? -1 : 1) * (CFG.pedAside + 8);
+      if (state === 'walk') vT = Math.min(vT, 8 + rest * 2.2);
+      h.v += clamp(vT - h.v, -180 * dt, 120 * dt);
+      const off0 = h.off;
+      let nt = h.t + h.v * dt;
+      let noff = h.off + clamp(offT - h.off, -CFG.pedStep * dt, CFG.pedStep * dt);
+      if (needBox && h.inBox !== B.id && nt > entry) { nt = entry; h.v = 0; }
+      if (!h.inBox) {
+        // Last line of defence: never step closer to a robot body that is already within reach
+        const tooClose = (t, o) => {
+          const x = A.x + ux * t + rx * o, y = A.y + uy * t + ry * o;
+          for (const r of this.robots) {
+            if (Math.abs(r.x - x) > 50 || Math.abs(r.y - y) > 50) continue;
+            const d = footprintDist(r, x, y);
+            if (d < CFG.humanR + 4 && d < footprintDist(r, h.x, h.y) - 0.01) return true;
+          }
+          return false;
+        };
+        if (tooClose(nt, noff)) {
+          if (!tooClose(h.t, noff)) nt = h.t;
+          else if (!tooClose(nt, h.off)) noff = h.off;
+          else { nt = h.t; noff = h.off; }
+          if (nt === h.t) h.v = 0;
+        }
+      }
+      h.t = nt;
+      h.off = noff;
+      h.phase += (h.v + Math.abs(h.off - off0) / dt) * dt * 0.34;
+      h.state = state;
+      h.x = A.x + ux * h.t + rx * h.off;
+      h.y = A.y + uy * h.t + ry * h.off;
+      if (h.t >= e.len) {
+        if (lastLeg) {
+          // Arrived at the work spot: stand at the lane edge facing the rack
+          h.node = h.goal;
+          h.state = 'dwell';
+          h.path = null;
+          h.inBox = null;
+          h.doff = G.side ? (h.x - G.x) * G.side[0] + (h.y - G.y) * G.side[1] : 0;
+          if (G.side) { h.x = G.x + G.side[0] * h.doff; h.y = G.y + G.side[1] * h.doff; }
+          h.faceH = G.face != null ? G.face : h.h;
+          h.timer = this.dwellTime(h);
+          return;
+        }
+        h.k++;
+        this.projectOnto(h, h.k);
+      }
+      h.clear = !h.inBox && Math.abs(h.off) >= CFG.pedAside - 3;
+      let face = Math.atan2(uy, ux);
+      if (state === 'aside' && h.asideFor >= 0) { const q = this.robots[h.asideFor]; face = Math.atan2(q.y - h.y, q.x - h.x); }
+      else if (h.v > 4 || Math.abs(h.off - off0) > 0.02) face = Math.atan2(uy * h.v + ry * (h.off - off0) / dt, ux * h.v + rx * (h.off - off0) / dt);
+      this.turnHuman(h, face, dt);
     }
 
     progress(r) {
@@ -1430,7 +1689,11 @@
       if (r.mode === 'idle') return { key: 'idle', label: 'Idle', tone: 'idle', text: `Parked at ${r.station}, awaiting task` };
       if (r.mode === 'loading') return { key: 'work', label: 'Loading', tone: 'work', text: `Receiving payload at ${r.station}` };
       if (r.mode === 'unloading') return { key: 'work', label: 'Unloading', tone: 'work', text: `Handing off payload at ${r.station}` };
-      if (r.humanStop >= 0) return { key: 'ped', label: 'Stopped', tone: 'wait', text: `Person ${this.humans[r.humanStop].id} crossing ahead, waiting` };
+      if (r.humanStop >= 0) {
+        const h = this.humans[r.humanStop];
+        return { key: 'ped', label: 'Stopped', tone: 'wait', text: `Person ${h.id} ${h.onLane && !h.inBox ? 'in the aisle' : 'crossing'} ahead, waiting` };
+      }
+      if (r.rotHold) return { key: 'ped', label: 'Holding', tone: 'wait', text: 'Person close by, holding the turn' };
       const b = r.block;
       if (b && b.kind === 'obstruction') return { key: 'replan', label: 'Replanning', tone: 'wait', text: `${Wd.edgeMap[b.edge].name} blocked, computing new route` };
       if (b && b.logged && b.kind === 'node') {
@@ -1447,7 +1710,7 @@
       if (r.motion === 'rotate') return { key: 'turn', label: 'Turning', tone: 'drive', text: 'Rotating in place to route heading' };
       return {
         key: 'move', label: r.mode === 'toPickup' ? 'To pickup' : 'In transit', tone: 'drive',
-        text: r.humanNear && r.v > 2 ? 'Slowing: person near path' : 'Via ' + this.viaText(r),
+        text: r.humanNear && r.v > 2 ? (r.humanPass ? 'Passing a person at reduced speed' : 'Slowing: person near path') : 'Via ' + this.viaText(r),
       };
     }
 

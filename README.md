@@ -43,11 +43,30 @@ aprons in Bay 01; a picker in the narrow pick aisles, a packer at the packing ce
 operator and a stock checker in Bay 02. They walk on painted green walkways between work spots,
 pause there to work, and cross robot lanes only on zebra crosswalks.
 
+The aisles are shared as well. In both instances a shift supervisor and an inventory auditor walk
+the robot lanes themselves, between rack-face work spots (the yellow standing boxes at the lane
+edge):
+
+- They walk a little right of the lane centre, in the robots' path. When a robot heads their way
+  they step aside to the lane edge, face it and wait until it has passed. The log records it.
+- They pass a standing robot at the lane edge, and walk around a blocked segment the same way.
+- They cross a robot intersection only when no robot is in it or about to enter it. While they
+  cross, the intersection is outlined amber and robots stop short of it. Otherwise they wait at
+  the lane edge (outlined green).
+- A person never stands still inside a lane's swept path, so a robot is never held up by
+  someone who is waiting for it, and the two never deadlock.
+
+On the robot side:
+
 - A person waits at the kerb while a robot is on the crosswalk or about to reach it, and never
   stops once crossing.
-- Robots slow down (≈1 m/s) when a person is near their path, and stop before a crosswalk someone
-  is on, treating the rest of that crosswalk as occupied. The log records each stop.
-- Robot–person contacts count as collisions; the stress test verifies there are none.
+- Robots slow down near a person along a braking curve: to about 1 m/s beside a walkway, and to
+  a creep (0.6 m/s) passing someone standing aside in a shared aisle. They stop for anyone in
+  their path and before a crosswalk or intersection someone is crossing. The log records each
+  stop.
+- A robot holds an in-place turn while a person is within reach of its corners.
+- Robot–person contacts count as collisions; the stress test verifies there are none, and fails
+  if a person ever stands still inside a lane for more than 3 s.
 
 Hover a person to see their role and what they are doing. The scanner safety field layer also
 shows the protective radius around each person.
@@ -70,6 +89,8 @@ conveyors.
 | Grey dashed trail | A route the robot abandoned when it re-planned |
 | Red hatched segment | Blocked path segment, with its countdown |
 | Green walkway, zebra crossing | Pedestrian walkway and crosswalk; the crosswalk is outlined while someone uses it |
+| Yellow dashed box at a lane edge | Rack-face work spot in a shared aisle, where a person stands aside |
+| Amber / green square on an intersection | A person is crossing it / waiting at the lane edge to cross |
 | Figure with a coloured ring | A worker (hard hat and hi-vis vest seen from above) |
 
 ## Controls
@@ -80,11 +101,11 @@ conveyors.
   Blocks that would trap a robot or cut off a station are refused.
 - **Random obstruction** blocks a segment on a route that is in use, so rerouting is easy to show.
 - **Layers** toggles paths, reservations, V2V messages, scanner safety fields and labels.
-- **Floor plan style** (moon and sun buttons in the map toolbar, or `L`) switches the warehouse map
-  between the dark style and a light, daylight style: pale concrete, white walls, white cartons
-  on wooden pallets, dock leveller plates and soft shadows. Only the map changes; the console
-  around it stays dark. The choice is remembered in the browser and also applies to the
-  previews on the Instances page.
+- **Floor plan style** (moon and sun buttons in the map toolbar, or `L`) switches the warehouse
+  map between the default light, daylight style (pale concrete, white walls, white cartons on
+  wooden pallets, dock leveller plates and soft shadows) and a dark style. Only the map changes;
+  the console around it stays dark. The choice is remembered in the browser and also applies to
+  the previews on the Instances page.
 - Keys: `Space` pause · `1–4` speed (0.5×, 1×, 2×, 4×) · `V` select · `B` block · `O` random
   obstruction · `+`/`−` zoom · `0` fit · `L` floor plan style · `F` full screen · `Esc` clear selection.
 
@@ -117,8 +138,11 @@ its path look-ahead, and every contact is checked with an oriented-box test.
 
 `node tools/stress-test.js [hours] [seeds] [layout]` runs the simulation headless for `bay-01`
 (instance 1) or `bay-02` (instance 2). It covers calm traffic and a "chaos" mode that randomly
-closes and reopens corridors, and fails on any collision or on any robot stalled for more than
-45 s. Both layouts record **0 collisions**.
+closes and reopens corridors. It fails on any collision (robot–robot or robot–person), on any
+robot stalled for more than 45 s, or on a person standing still inside a lane for more than 3 s.
+Over 3 × 3 h per mode, both layouts record **0 collisions**. The longest robot stall is 18 s, the
+longest wait by a person at a kerb or intersection is 11 s, and throughput is 266–295
+deliveries/h with the shared-aisle walkers on the floor.
 
 ## Files
 

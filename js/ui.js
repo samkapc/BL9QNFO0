@@ -19,7 +19,7 @@
   const LEVEL = {
     system: 'info', task: 'info', claim: 'info', pickup: 'info', deliver: 'info',
     negotiate: 'notice', reroute: 'notice', resolve: 'notice', clear: 'notice',
-    conflict: 'warn', deadlock: 'warn', block: 'warn', safety: 'warn', alert: 'alarm',
+    conflict: 'warn', deadlock: 'warn', block: 'warn', safety: 'warn', alert: 'alarm', people: 'info',
   };
   const TASK_TYPES = { system: 1, task: 1, claim: 1, pickup: 1, deliver: 1 };
   const HINT = {
@@ -72,7 +72,7 @@
         b.setAttribute('aria-pressed', String(on));
       });
       this.el.wrap.classList.toggle('light', t === 'light');
-      if (!initial) { try { root.localStorage.setItem('edgefleet.mapTheme', t); } catch (e) { /* storage unavailable */ } }
+      if (!initial) { try { root.localStorage.setItem(WH.MAP_THEME_KEY, t); } catch (e) { /* storage unavailable */ } }
     }
 
     clock(t) {
@@ -460,7 +460,9 @@
       const sim = this.sim;
       if (hit.human != null) {
         const h = sim.humans[hit.human];
-        return `<b>${h.id}</b> · ${esc(h.role)}<span class="k">${esc(sim.humanStatus(h))}</span><span class="a">Robots slow down near people and stop for them on crosswalks</span>`;
+        const note = h.onLane ? 'Shared aisle: robots creep past people standing aside and stop for anyone in their path'
+          : 'Robots slow down near people and stop for them on crosswalks';
+        return `<b>${h.id}</b> · ${esc(h.role)}<span class="k">${esc(sim.humanStatus(h))}</span><span class="a">${note}</span>`;
       }
       if (hit.robot != null) {
         const r = sim.robots[hit.robot], st = sim.status(r);

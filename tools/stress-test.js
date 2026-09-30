@@ -20,7 +20,7 @@ function run(seed, chaos) {
   const steps = Math.round((hours * 3600) / DT);
   const stuck = sim.robots.map(() => ({ since: 0, max: 0, at: 0 }));
   const idle = sim.robots.map(() => 0);
-  let maxWait = 0;
+  let maxWait = 0, maxLane = 0;
   let nextChaos = 20;
   for (let i = 0; i < steps; i++) {
     sim.step(DT);
@@ -31,22 +31,28 @@ function run(seed, chaos) {
       sim.toggleObstruction(e.id);
     }
     sim.robots.forEach((r, k) => {
-      const busy = r.v > 1 || r.motion === 'rotate' || r.mode === 'loading' || r.mode === 'unloading' || r.mode === 'idle';
+      const busy = r.v > 1 || (r.motion === 'rotate' && !r.rotHold) || r.mode === 'loading' || r.mode === 'unloading' || r.mode === 'idle';
       if (busy) stuck[k].since = sim.t;
       const d = sim.t - stuck[k].since;
       if (d > stuck[k].max) { stuck[k].max = d; stuck[k].at = sim.t; }
       if (r.mode === 'idle') idle[k] += DT;
     });
-    for (const h of sim.humans) if (h.waitT > maxWait) maxWait = h.waitT;
+    for (const h of sim.humans) {
+      if (h.waitT > maxWait) maxWait = h.waitT;
+      // A person standing still inside a lane's swept path (not aside) would block robots
+      const still = h.onLane && !h.clear && h.v < 1 && h.state !== 'dwell';
+      h.stillT = still ? (h.stillT || 0) + DT : 0;
+      if (h.stillT > maxLane) maxLane = h.stillT;
+    }
   }
-  return { sim, stuck, idle, maxWait };
+  return { sim, stuck, idle, maxWait, maxLane };
 }
 
 const counts = {};
 let failed = false;
 for (let s = 1; s <= seeds; s++) {
   for (const chaos of [false, true]) {
-    const { sim, stuck, idle, maxWait } = run(s * 7919, chaos);
+    const { sim, stuck, idle, maxWait, maxLane } = run(s * 7919, chaos);
     const st = sim.stats;
     for (const ev of sim.events) counts[ev.type] = (counts[ev.type] || 0) + 1;
     const maxStuck = Math.max(...stuck.map((x) => x.max));
@@ -56,9 +62,10 @@ for (let s = 1; s <= seeds; s++) {
       ` | collisions ${st.collisions} | yields ${st.yields} | resolved ${st.conflicts} | reroutes ${st.reroutes}` +
       ` | negotiations ${st.negotiations} | deadlocks ${st.deadlocks} | minSep ${st.minSep.toFixed(1)}` +
       ` | max stall ${maxStuck.toFixed(1)} s @${stuck.map((x) => x.at.toFixed(0)).join('/')} | idle ${idle.map((x) => (100 * x / (hours * 3600)).toFixed(1) + '%').join(' ')}` +
-      ` | people ${sim.humans.length}: ped stops ${st.pedStops}, kerb waits ${st.pedWaits || 0}, max kerb wait ${maxWait.toFixed(1)} s, closest ${isFinite(st.minPedSep) ? st.minPedSep.toFixed(1) : '-'}`
+      ` | people ${sim.humans.length}: ped stops ${st.pedStops}, kerb waits ${st.pedWaits}, box waits ${st.boxWaits}, asides ${st.laneAsides},` +
+      ` turn holds ${st.rotHolds}, max wait ${maxWait.toFixed(1)} s, max still in lane ${maxLane.toFixed(1)} s, closest ${isFinite(st.minPedSep) ? st.minPedSep.toFixed(1) : '-'}`
     );
-    if (st.collisions > 0 || maxStuck > 45) failed = true;
+    if (st.collisions > 0 || maxStuck > 45 || maxLane > 3) failed = true;
   }
 }
 console.log(failed ? 'FAIL' : 'PASS');

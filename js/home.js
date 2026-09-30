@@ -18,7 +18,7 @@
 
   /** Simplified floor plan of a layout, fitted into its canvas. */
   function drawPreview(canvas, L) {
-    const P = PREVIEW[(WH.savedMapTheme && WH.savedMapTheme()) || 'dark'];
+    const P = PREVIEW[(WH.savedMapTheme && WH.savedMapTheme()) || 'light'];
     const box = canvas.parentElement.getBoundingClientRect();
     if (!box.width || !box.height) return;
     const dpr = Math.min(2, root.devicePixelRatio || 1);

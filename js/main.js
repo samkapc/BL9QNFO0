@@ -8,9 +8,11 @@
   // Each instance runs its own layout and fleet, so moving between views reloads the page.
   root.addEventListener('hashchange', () => root.location.reload());
 
-  // The floor plan style (dark or light) is remembered per viewer; the console itself is always dark.
+  // The floor plan style is light unless the viewer picked dark (remembered per viewer); the
+  // console itself is always dark.
+  WH.MAP_THEME_KEY = 'edgefleet.floorStyle';
   WH.savedMapTheme = () => {
-    try { return root.localStorage.getItem('edgefleet.mapTheme') === 'light' ? 'light' : 'dark'; } catch (e) { return 'dark'; }
+    try { return root.localStorage.getItem(WH.MAP_THEME_KEY) === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; }
   };
 
   const home = document.getElementById('home');

@@ -5,9 +5,9 @@
  * building column grid, rack slots, the path network and its nodes, traffic zones.
  * The static layer is cached and re-rendered only when the view (zoom/pan/size) settles.
  *
- * Two map styles: "dark" (operator console) and "light" (a daylight hall modelled on a
- * photoreal render: pale concrete, white walls, white cartons on wooden pallets, soft shadows).
- * Only the map switches; the surrounding console stays dark.
+ * Two map styles: "light" (the default: a daylight hall modelled on a photoreal render, with
+ * pale concrete, white walls, white cartons on wooden pallets, soft shadows) and "dark"
+ * (operator console). Only the map switches; the surrounding console stays dark.
  */
 (function (root) {
   'use strict';
@@ -142,14 +142,14 @@
       this.statView = null;
       this.viewChangedAt = 0;
       this.tmp = { x: 0, y: 0, h: 0 };
-      this.theme = (opts && opts.theme) === 'light' ? 'light' : 'dark';
+      this.theme = (opts && opts.theme) === 'dark' ? 'dark' : 'light';
       C = this.theme === 'light' ? LIGHT : DARK;
       TONE = tones(C);
       this.resize();
     }
 
     setTheme(theme) {
-      this.theme = theme === 'light' ? 'light' : 'dark';
+      this.theme = theme === 'dark' ? 'dark' : 'light';
       C = this.theme === 'light' ? LIGHT : DARK;
       TONE = tones(C);
       this.drawStatic();
@@ -602,12 +602,31 @@
       }
     }
 
-    // Painted pedestrian walkways (green), and zebra crosswalks where they cross a robot lane
+    // Painted pedestrian walkways (green), zebra crosswalks where they cross a robot lane, and the
+    // yellow standing boxes at the lane edge where people work a rack face in a shared aisle
     drawWalkways(ctx) {
       const P = Wd.peds;
       if (!P) return;
       const hw = 11;
       const green = C.light ? '40,145,78' : '63,168,107';
+      const aside = this.sim.cfg.pedAside;
+      for (const n of P.list) {
+        if (!n.side) continue;
+        const cx = n.x + n.side[0] * aside, cy = n.y + n.side[1] * aside;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(Math.atan2(n.side[1], n.side[0]));
+        ctx.fillStyle = C.light ? 'rgba(226,186,40,0.16)' : 'rgba(214,178,58,0.07)';
+        ctx.fillRect(-12, -13, 16, 26);
+        ctx.strokeStyle = C.light ? 'rgba(196,150,20,0.85)' : 'rgba(214,178,58,0.5)';
+        ctx.lineWidth = this.px(1.2);
+        ctx.setLineDash([3, 2]);
+        ctx.strokeRect(-12, -13, 16, 26);
+        ctx.setLineDash([]);
+        ctx.fillStyle = ctx.strokeStyle;
+        for (const fy of [-4, 4]) { ctx.beginPath(); ctx.ellipse(-4, fy, 3.6, 1.9, 0, 0, Math.PI * 2); ctx.fill(); }
+        ctx.restore();
+      }
       for (const e of P.edges) {
         const A = P.nodes[e.a], B = P.nodes[e.b];
         const ux = (B.x - A.x) / e.len, uy = (B.y - A.y) / e.len, nx = -uy, ny = ux;
@@ -670,13 +689,29 @@
       }
     }
 
-    // A crosswalk in use: outlined while someone is on it or waiting to cross
+    // A crosswalk or robot intersection in use: outlined while someone is on it or waiting to cross
     drawCrosswalkUse(ctx) {
       const P = Wd.peds;
       if (!P) return;
       for (const h of this.sim.humans) {
         if (!h.path) continue;
         const e = h.edges[h.k];
+        if (e && e.lane) {
+          const id = h.inBox || (h.state === 'wait' ? h.path[h.k + 1] : null);
+          const N = id && P.nodes[id];
+          if (!N || !N.box) continue;
+          const s = Wd.HALF + 3, onIt = !!h.inBox;
+          ctx.beginPath();
+          ctx.rect(N.x - s, N.y - s, s * 2, s * 2);
+          ctx.fillStyle = rgba(onIt ? C.warn : C.ok, 0.08);
+          ctx.fill();
+          ctx.strokeStyle = rgba(onIt ? C.warn : C.ok, 0.8);
+          ctx.lineWidth = this.px(1.4);
+          ctx.setLineDash(onIt ? [] : [4, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          continue;
+        }
         if (!e || !e.cross) continue;
         const onIt = h.state === 'walk' && h.t > 0;
         if (!onIt && h.state !== 'wait') continue;
